@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from app.pipeline import FraudDetector
 from app import razorpay_client
+from app.verification import verifier
 
 _ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "..", "artifacts")
 
@@ -68,6 +69,7 @@ class PaymentEvent(BaseModel):
     is_new_device: bool = False
     three_ds_passed: bool = True
     status: str = "captured"
+    phone: str = ""
 
 
 class InvestigateRequest(BaseModel):
@@ -150,6 +152,72 @@ def investigate(req: InvestigateRequest):
         return det.investigate_event(evt, history=history)
     except Exception as exc:  # pragma: no cover
         raise HTTPException(500, f"investigation failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------- verification
+class OtpRequest(BaseModel):
+    otp: str = Field(..., min_length=1, max_length=12,
+                     description="one-time passcode the payer read back over the phone")
+
+
+class VerifyEventRequest(BaseModel):
+    event: PaymentEvent
+
+
+@app.get("/api/verification")
+def verification_list():
+    """All phone-call payment-confirmation sessions (active + resolved)."""
+    return {"sessions": verifier().list(), "status": verifier().status()}
+
+
+@app.get("/api/verification/{verification_id}")
+def verification_get(verification_id: str):
+    try:
+        return verifier().get(verification_id)
+    except KeyError:
+        raise HTTPException(404, "verification not found")
+
+
+@app.post("/api/verification/{verification_id}/confirm")
+def verification_confirm(verification_id: str, body: OtpRequest):
+    """Complete the phone call. Correct OTP -> APPROVE. Wrong OTP / cap exceeded
+    -> escalate to BLOCK. The payer's ownership confirmation is implicit via the
+    call script."""
+    try:
+        return verifier().confirm(verification_id, body.otp)
+    except KeyError:
+        raise HTTPException(404, "verification not found")
+
+
+@app.post("/api/verification/{verification_id}/deny")
+def verification_deny(verification_id: str):
+    """The payer denied making this payment -> escalate to BLOCK."""
+    try:
+        return verifier().deny(verification_id)
+    except KeyError:
+        raise HTTPException(404, "verification not found")
+
+
+@app.post("/api/verification/{verification_id}/resend")
+def verification_resend(verification_id: str):
+    """Regenerate the OTP and re-place the call."""
+    try:
+        return verifier().resend(verification_id)
+    except KeyError:
+        raise HTTPException(404, "verification not found")
+
+
+@app.post("/api/verify/event")
+def verify_event(req: VerifyEventRequest):
+    """Score an event and, if it lands on the medium-risk band, return a live
+    phone-verification handle ready for OTP confirmation."""
+    det = get_detector()
+    evt = req.event.model_dump()
+    try:
+        res = det.investigate_event(evt)
+        return res
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(500, f"verification setup failed: {exc}") from exc
 
 
 # ------------------------------------------------------------------ razorpay

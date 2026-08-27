@@ -49,6 +49,7 @@ header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
   white-space: nowrap;
 }
 .pill.online { color: var(--green); border-color: rgba(0,184,148,.4); }
+.pill.offline { color: var(--red); border-color: rgba(255,118,117,.4); }
 
 .grid { display: grid; gap: 16px; }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
@@ -109,6 +110,17 @@ tr.clickable:hover td { background: rgba(108,92,231,.08); }
 }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn.ghost { background: var(--card-2); border: 1px solid var(--border); color: var(--text); }
+.btn.danger { background: rgba(255,118,117,.15); border: 1px solid rgba(255,118,117,.4); color: var(--red); }
+
+.green { color: var(--green); }
+.red { color: var(--red); }
+.amber { color: var(--amber); }
+
+.phone-box {
+  border: 1px dashed var(--border); border-radius: 12px; padding: 14px;
+  background: var(--bg-2); margin-top: 12px;
+}
+.otp { font-size: 22px; font-weight: 700; letter-spacing: .18em; margin-top: 4px; }
 
 input, select {
   background: var(--bg-2); border: 1px solid var(--border); color: var(--text);

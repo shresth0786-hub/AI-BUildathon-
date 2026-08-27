@@ -22,6 +22,7 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
 from app.models.graph_engine import GraphEngine
+from app.verification import verifier
 
 _ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "..", "artifacts")
 
@@ -36,6 +37,8 @@ class Investigator:
         self.weights = None       # fitted coefficients (for explainability)
         self.approve_thresh = 0.35
         self.review_thresh = 0.65
+        self.behaviour_review_thresh = 0.9
+        self.behaviour_review_min_amount = 1000
         self.pred_auc = None
         self.vector_model = None  # simple classifier to predict fraud vector
         self.graph_engine: GraphEngine | None = None
@@ -106,10 +109,41 @@ class Investigator:
             decision = "approve"
 
         row = self.event_df.iloc[idx]
+
+        # Behaviour-anomaly escalation: a payer whose behaviour deviates sharply
+        # from their established, legitimate profile (novel device / cadence /
+        # velocity) AND who is attempting a HIGH-VALUE payment is exactly the
+        # case where a supervised model may legitimately under-estimate risk.
+        # Escalate these to a phone-verification (review) so a human/OTP confirms
+        # ownership before settlement, rather than auto-approving a disguised
+        # attack. The high-value guard avoids escalating small, harmless
+        # behavioural quirks onto legitimate low-value payments.
+        if (
+            decision == "approve"
+            and p_behav >= self.behaviour_review_thresh
+            and row["amount_inr"] >= self.behaviour_review_min_amount
+        ):
+            decision = "review"
+
         feat = self.feat_df.iloc[idx]
 
         evidence = self._build_evidence(row, feat, p_ml, p_behav, p_graph, p)
-        report = self._build_report(row, feat, decision, evidence, p)
+        report = self._build_report(row, feat, decision, evidence, p, p_ml, p_behav, p_graph)
+
+        # --- phone-call payment confirmation for the medium-risk band -------
+        phone = None
+        if decision == "review":
+            # The caller must first verify ownership over the phone before we
+            # settle. Attach the verification handle (OTP + call script) to the
+            # response so the dashboard can complete the call.
+            call_context = self._event_for_verification(row)
+            call_context["event_id"] = str(row["event_id"])
+            call_context["user_id"] = str(row["user_id"])
+            call_context["merchant"] = str(row["merchant"])
+            call_context["amount_inr"] = float(row["amount_inr"])
+            call_context["card_last4"] = str(row["card_last4"])
+            phone = verifier().create(call_context)
+
         return {
             "event_id": row["event_id"],
             "user_id": row["user_id"],
@@ -123,10 +157,21 @@ class Investigator:
                 "investigator": round(p, 4),
             },
             "decision": decision,
+            "phone_verification": phone,
             "true_label": int(row["true_label"]),
             "fraud_vector": row["fraud_vector"],
             "evidence": evidence,
             "report": report,
+        }
+
+    @staticmethod
+    def _event_for_verification(row) -> dict:
+        # carry payer contact + payment fields used by the call/OTP flow
+        return {
+            "phone": str(row.get("phone", "")),
+            "amount_inr": float(row["amount_inr"]),
+            "merchant": str(row["merchant"]),
+            "card_last4": str(row["card_last4"]),
         }
 
     def _build_evidence(self, row, feat, p_ml, p_behav, p_graph, p) -> list[dict]:
@@ -194,7 +239,8 @@ class Investigator:
                        "weight": round(float(p), 3)})
         return ev
 
-    def _build_report(self, row, feat, decision, evidence, p) -> str:
+    def _build_report(self, row, feat, decision, evidence, p,
+                      p_ml=None, p_behav=None, p_graph=None) -> str:
         lines = [
             f"INVESTIGATION REPORT — {row['event_id']}",
             f"Decision: {decision.upper()}  |  Combined fraud probability: {p:.0%}",
@@ -213,7 +259,14 @@ class Investigator:
             lines.append("No high-risk signals detected; pattern consistent with "
                          "the payer's established behaviour.")
         lines.append("")
-        if decision != "approve":
+        if decision == "review":
+            lines.append(
+                "Recommendation: the payment is medium-risk — hold settlement and "
+                "run PHONE VERIFICATION with the payer before releasing funds. "
+                "A call/OTP confirmation is required; the payment is approved only "
+                "after the payer correctly confirms ownership, otherwise it is "
+                "escalated to BLOCK.")
+        elif decision != "approve":
             lines.append("Recommendation: send for manual review before funds are "
                          "settled to the merchant; consider velocity cap and "
                          "additional KYC on the payer.")
@@ -230,6 +283,8 @@ class Investigator:
             "stacker": self.stacker, "weights": self.weights,
             "approve_thresh": self.approve_thresh,
             "review_thresh": self.review_thresh,
+            "behaviour_review_thresh": self.behaviour_review_thresh,
+            "behaviour_review_min_amount": self.behaviour_review_min_amount,
             "pred_auc": self.pred_auc,
             "vector_model": self.vector_model,
         }, path)
@@ -244,6 +299,8 @@ class Investigator:
         inv.weights = payload["weights"]
         inv.approve_thresh = payload["approve_thresh"]
         inv.review_thresh = payload["review_thresh"]
+        inv.behaviour_review_thresh = payload.get("behaviour_review_thresh", 0.9)
+        inv.behaviour_review_min_amount = payload.get("behaviour_review_min_amount", 1000)
         inv.pred_auc = payload["pred_auc"]
         inv.vector_model = payload["vector_model"]
         return inv

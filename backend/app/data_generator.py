@@ -68,10 +68,17 @@ def generate_events(
     n_fraud: int = 900,
     seed: int = 42,
     fraud_mix: dict | None = None,
+    n_reviewish: int = 120,
 ) -> pd.DataFrame:
     """Return a DataFrame of synthetic payment events.
 
     Mix (by weight) of the five fraud vectors. Defaults to roughly equal.
+
+    `n_reviewish` adds a third "borderline / ambiguous" population of genuine
+    payers whose current payment carries several soft risk signals (new device,
+    mid/high value, occasional geo/method mismatch) but is NOT clearly fraud.
+    These deliberately fall into the MEDIUM-RISK (review) band so the
+    phone-call payment-confirmation flow is demonstrable end-to-end.
     """
     random.seed(seed)
     np.random.seed(seed)
@@ -87,6 +94,11 @@ def generate_events(
         ts = int(np.random.randint(1_620_000_000, 1_720_000_000))
         amount = float(np.random.lognormal(mean=4.1, sigma=0.85))  # ~INR 60-1500
         rows.append(_bona_fide_row(actor, card_tail, device, ts, amount, i))
+
+    # ----------------------------------------------- borderline (review band)
+    for i in range(n_reviewish):
+        actor = f"usr_rev{i:04d}"
+        rows.append(_reviewish_row(actor, i))
 
     # ------------------------------------------------------------- fraud
     weights = np.array(list(mix.values()), dtype=np.float64)
@@ -131,6 +143,54 @@ def _bona_fide_row(actor, card_tail, device, ts, amount, i) -> dict:
         "three_ds_passed": True,
         "fraud_vector": None,
         "true_label": int(is_fraud),
+    }
+
+
+def _reviewish_row(actor: str, i: int) -> dict:
+    """A borderline LEGITIMATE payer on the phone-verification (review) band.
+
+    Genuine, but the current payment carries enough soft signals to warrant a
+    confirm-first phone call rather than a clean auto-approve:
+      * new device for this payer, OR
+      * moderate-to-high value, AND/OR
+      * geo / address inconsistency, OR multiple attempts.
+    Crucially these are NOT the clear-cut fraud patterns (no card-testing
+    micro-amounts, no bot cadence, no collusion ring), so they score in the
+    medium-risk band instead of block.
+    """
+    method = random.choices(PAYMENT_METHODS, weights=[0.45, 0.3, 0.1, 0.1, 0.05])[0]
+    amount = float(np.random.uniform(1200, 12000))
+    ip_geo_match = random.random() < 0.7
+    is_international = random.random() < 0.35
+    is_new_device = random.random() < 0.6
+    device = (f"dev_new_{actor}" if is_new_device else f"dev_known_{actor}")[:16]
+    shipping_zip = ""
+    if random.random() < 0.25:
+        shipping_zip = f"{random.randint(100000, 999999):06d}"  # mismatch
+    return {
+        "event_id": "",
+        "user_id": actor,
+        "payer_email": f"{actor}@mail.com",
+        "phone": f"+91{random.randint(7000000000, 9999999999)}",
+        "device_id": device,
+        "card_last4": f"{random.randint(1000, 9999):04d}",
+        "payment_method": method,
+        "merchant": _pick_merchant(actor, i),
+        "amount_inr": round(amount, 2),
+        "currency": "INR",
+        "status": "captured",
+        "event_ts": int(np.random.randint(1_620_000_000, 1_720_000_000)),
+        "card_bin_country": _pick_country(),
+        "ip_geo_match": bool(ip_geo_match),
+        "is_international": bool(is_international),
+        "billing_zip": f"{random.randint(100000, 999999):06d}",
+        "shipping_zip": shipping_zip,
+        "typing_seconds": float(np.random.uniform(1.0, 3.5)),
+        "attempt_count": int(random.choices([1, 2, 3], weights=[0.6, 0.25, 0.15])[0]),
+        "is_new_device": bool(is_new_device),
+        "three_ds_passed": True,
+        "fraud_vector": None,
+        "true_label": 0,
     }
 
 

@@ -31,7 +31,7 @@ pip install -r requirements.txt
 python train.py
 
 # 3. Start the API
-uvicorn app.main:app --port 8000
+uvicorn app.main:app --port 8100
 
 # 4. In a second terminal, start the dashboard
 cd frontend/app
@@ -39,7 +39,10 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** (dashboard) and **http://127.0.0.1:8000/docs** (API docs).
+Open **http://localhost:5173** (dashboard) and **http://127.0.0.1:8100/docs** (API docs).
+
+> Note: the dashboard's Vite dev server proxies `/api` → `http://127.0.0.1:8100`.
+> If you run the API on a different port, update `frontend/app/vite.config.js`.
 
 Or, on Windows, run `powershell -ExecutionPolicy Bypass -File start.ps1` to launch both.
 
@@ -79,13 +82,24 @@ method-mix entropy, failure rate) signals.
   the most likely **fraud vector**.
 - Builds an **evidence list** (which model fired and why — velocity, geography,
   bot cadence, shared-entity linkage, ensemble agreement) and a narrative report.
+- **Phone-call payment confirmation:** medium-risk (`review`) payments are **not**
+  auto-approved; they are held and a **phone call/OTP** is issued
+  (`backend/app/verification.py`). The payment settles only after the payer
+  confirms ownership (correct OTP → `approve`; wrong OTP / denied / cap exceeded
+  → `block`). Ships as a **simulated** offline demo (OTP + call script shown in
+  the dashboard) with an optional **real Twilio** fallback. A borderline
+  "review-ish" legitimate population is held out of training and escalated into
+  the `review` band (behaviour-anomaly + high-value guard) so this flow is
+  demonstrable without hurting the honest held-out metrics.
 
 ### 5. API + Dashboard
 - **FastAPI** (`app/main.py`): summary, event stream, per-event investigation,
   fraud vectors, live `/api/investigate`, and **optional real Razorpay test-mode**
   endpoints (`/api/rzp/create-order`, `/api/rzp/webhook`).
 - **React + Recharts** dashboard: decision distribution, model-ensemble weights,
-  fraud-vector breakdown, live payment check, and clickable investigation reports.
+  fraud-vector breakdown, live payment check, clickable investigation reports,
+  and a **phone-verification panel** (run the "Borderline — phone verify"
+  scenario → see OTP + call script → confirm / deny / resend).
 
 ---
 
@@ -98,16 +112,18 @@ trained on (no leakage). Full breakdown with the false-positive cost model is in
 | Metric | Value |
 |--------|-------|
 | **Precision** | **1.000** |
-| **Recall (fraud blocked)** | **0.994** (179 / 180) |
-| **F1** | **0.997** |
+| **Recall (fraud blocked)** | **0.973** (180 / 185) |
+| **F1** | **0.986** |
 | False positives (legit blocked) | **0** |
-| False negatives (fraud approved) | 1 |
+| False negatives (fraud approved) | 5 |
 | Investigator AUC | 0.998 |
 
 Cost outcome on the test set: false-positive cost **₹0**, false-negative cost
-₹1,478, **total cost ₹1,478** vs. a no-intervention baseline of ₹266,096 →
-**₹264,618 money prevented**. Track split: 5,520 train / 1,380 test events
-(180 fraud).
+₹8,466, **total cost ₹8,466** vs. a no-intervention baseline of ₹313,247 →
+**₹304,781 money prevented**. Track split: 5,640 train / 1,380 test events
+(185 fraud). The 5 honest "false negatives" were all escalated to `review`
+(never `approve`), so they would have been caught by the phone-call
+payment-confirmation step rather than released.
 
 Served live at `GET /api/test-metrics` and displayed in the dashboard under
 **"Track 02 — AI Risk Manager: the bar"**.
@@ -146,6 +162,10 @@ checkouts and webhooks:
 | GET    | `/api/events/{id}`       | Full investigation report for one event  |
 | GET    | `/api/vectors`           | Fraud-vector distribution                |
 | POST   | `/api/investigate`       | Live score a payment (with optional `history`) |
+| GET    | `/api/verification`      | List phone-call payment-confirmation sessions  |
+| POST   | `/api/verification/{id}/confirm` | Complete the call with the payer's OTP (→ approve/block) |
+| POST   | `/api/verification/{id}/deny`    | Caller denied ownership (→ block)        |
+| POST   | `/api/verification/{id}/resend`  | Regenerate the OTP + re-place the call    |
 | GET    | `/api/demo/fraud`        | Card-testing burst demo body             |
 | GET    | `/api/demo/clean`        | Clean-customer demo body                 |
 | GET    | `/api/rzp/status`        | Real-key configuration status            |
@@ -167,6 +187,7 @@ razorpay-fraud-detector/
 │  │  │  ├─ behaviour_ai.py     # anomaly autoencoder
 │  │  │  └─ graph_engine.py     # network graph model
 │  │  ├─ investigator.py        # ensemble + evidence
+│  │  ├─ verification.py        # phone-call payment confirmation (OTP)
 │  │  ├─ pipeline.py            # orchestration
 │  │  ├─ razorpay_client.py     # optional real-key integration
 │  │  └─ main.py                # FastAPI

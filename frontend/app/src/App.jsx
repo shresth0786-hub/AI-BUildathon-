@@ -207,6 +207,88 @@ function EventDetail({ id, onClose }) {
   )
 }
 
+// ------------------------------------------------------------------ phone verification
+function PhoneVerifyBox({ pv, busy, onAction }) {
+  const approved = pv.status === 'approved'
+  const blocked = pv.status === 'blocked' || pv.status === 'expired'
+  return (
+    <div className="phone-box" style={{ borderColor: approved ? C.green : blocked ? C.red : C.amber }}>
+      <h4 style={{ margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        📞 Phone-call payment confirmation
+        <span className={`pill ${approved ? 'online' : blocked ? 'offline' : ''}`}>{pv.status.toUpperCase()}</span>
+      </h4>
+      <div className="muted" style={{ fontSize: 13 }}>
+        ₹{pv.amount_inr?.toLocaleString('en-IN')} at {pv.merchant} · card ••{pv.card_last4} · call {pv.phone}
+      </div>
+      {pv.status === 'pending' && (
+        <div className="form-row" style={{ marginTop: 10 }}>
+          <div>
+            <label>OTP sent to payer</label>
+            <div className="mono otp">{pv.otp}</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+            <button className="btn" disabled={busy} onClick={() => onAction('confirm')}
+              title="Payer read back the correct OTP -> approve">Confirm OTP</button>
+            <button className="btn ghost" disabled={busy} onClick={() => onAction('resend')}>Resend</button>
+            <button className="btn danger" disabled={busy} onClick={() => onAction('deny')}>Deny</button>
+          </div>
+        </div>
+      )}
+      <details style={{ marginTop: 8 }}>
+        <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>Call script (agent reads this)</summary>
+        {(pv.call_script || []).map((line, i) => <div key={i} className="muted" style={{ fontSize: 13, marginTop: 4 }}>• {line}</div>)}
+      </details>
+      {pv.status === 'approved' && <div className="green" style={{ marginTop: 8 }}>Payer confirmed ownership — payment approved.</div>}
+      {pv.status === 'blocked' && <div className="red" style={{ marginTop: 8 }}>Verification failed — payment blocked: {pv.reason || 'caller denied'}</div>}
+    </div>
+  )
+}
+
+function PhoneVerificationPanel() {
+  const [sessions, setSessions] = useState([])
+  const [mode, setMode] = useState('simulated')
+  const [busyId, setBusyId] = useState(null)
+  const [err, setErr] = useState(null)
+
+  const refresh = useCallback(() => {
+    api.verification().then((d) => {
+      setSessions(d.sessions || [])
+      setMode(d.status?.mode || 'simulated')
+    }).catch(() => {})
+  }, [])
+  useEffect(refresh, [refresh])
+
+  const act = async (id, action, otp) => {
+    setErr(null); setBusyId(id)
+    try {
+      if (action === 'confirm') await api.verConfirm(id, otp)
+      else if (action === 'resend') await api.verResend(id)
+      else await api.verDeny(id)
+      refresh()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <div className="card">
+      <h3>Phone-call payment confirmations</h3>
+      <div className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+        Mode: <b>{mode}</b> — medium-risk payments are held for an OTP/call before settlement.
+        Run the <b>Borderline</b> scenario above to open a session.
+      </div>
+      {err && <p style={{ color: C.red, fontSize: 13 }}>{err}</p>}
+      {sessions.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No verification sessions yet.</div>}
+      {sessions.map((pv) => (
+        <PhoneVerifyBox key={pv.verification_id} pv={pv}
+          busy={busyId === pv.verification_id} onAction={(a) => act(pv.verification_id, a)} />
+      ))}
+    </div>
+  )
+}
+
 // ------------------------------------------------------------------ live test
 function LiveTest({ onInvestigate }) {
   const [running, setRunning] = useState(false)
@@ -217,13 +299,32 @@ function LiveTest({ onInvestigate }) {
   const run = async () => {
     setRunning(true); setErr(null); setOut(null)
     try {
-      const body = mode === 'fraud' ? await api.demoFraud() : await api.demoClean()
+      const body = mode === 'fraud' ? await api.demoFraud()
+        : mode === 'review' ? await api.demoBorderline() : await api.demoClean()
       const res = await api.investigate(body)
       setOut(res)
     } catch (e) {
       setErr(e.message)
     } finally {
       setRunning(false)
+    }
+  }
+
+  const [pvBusy, setPvBusy] = useState(false)
+  const phoneAction = async (action) => {
+    const pv = out?.phone_verification
+    if (!pv) return
+    setPvBusy(true); setErr(null)
+    try {
+      let updated
+      if (action === 'confirm') updated = await api.verConfirm(pv.verification_id, pv.otp)
+      else if (action === 'resend') updated = await api.verResend(pv.verification_id)
+      else updated = await api.verDeny(pv.verification_id)
+      setOut({ ...out, phone_verification: updated })
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setPvBusy(false)
     }
   }
 
@@ -238,6 +339,7 @@ function LiveTest({ onInvestigate }) {
           <label>Scenario</label>
           <select value={mode} onChange={(e) => setMode(e.target.value)}>
             <option value="fraud">Card-testing burst (fraud)</option>
+            <option value="review">Borderline — phone verify (review)</option>
             <option value="clean">Established customer (clean)</option>
           </select>
         </div>
@@ -270,6 +372,7 @@ function LiveTest({ onInvestigate }) {
               ))}
             </ul>
           )}
+          {out.phone_verification && <PhoneVerifyBox pv={out.phone_verification} busy={pvBusy} onAction={phoneAction} />}
           <details style={{ marginTop: 12 }}>
             <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>Show full report</summary>
             <pre style={{ marginTop: 8 }}>{out.report}</pre>
@@ -399,6 +502,9 @@ export default function App() {
         {vectors && <VectorBars vectors={vectors} />}
         <LiveTest key={summary ? 'loaded' : 'loading'} />
       </div>
+
+      <h2 className="section">Phone-call payment confirmation (review band)</h2>
+      <PhoneVerificationPanel />
 
       <h2 className="section">Payment stream</h2>
       <EventsTable onSelect={setSelected} />

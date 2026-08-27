@@ -48,9 +48,11 @@ class FraudDetector:
 
     # ------------------------------------------------------------------ build
     def build(self, n_bona_fide: int = 6000, n_fraud: int = 900,
-              seed: int = 42, save: bool = True, split: float = 0.8) -> dict:
+              seed: int = 42, save: bool = True, split: float = 0.8,
+              n_reviewish: int = 120) -> dict:
         t0 = time.time()
-        events = generate_events(n_bona_fide=n_bona_fide, n_fraud=n_fraud, seed=seed)
+        events = generate_events(n_bona_fide=n_bona_fide, n_fraud=n_fraud,
+                                 seed=seed, n_reviewish=n_reviewish)
         self.event_df = events
         self.fe = FeatureEngineer()
         feat = self.fe.build(events)
@@ -64,6 +66,15 @@ class FraudDetector:
         np.random.shuffle(idx)
         cut = int(n * split)
         tr_idx, te_idx = idx[:cut], idx[cut:]
+
+        # The "borderline / review" population (usr_rev*) is deliberately held
+        # OUT of training and evaluation. These are UNSEEN medium-risk payments
+        # that the models have never been fit on, so they score as genuinely
+        # uncertain (the review band) rather than being memorised as clean.
+        rev_mask = events["user_id"].astype(str).str.startswith("usr_rev")
+        rev_idx = np.where(rev_mask.values)[0]
+        tr_idx = tr_idx[~np.isin(tr_idx, rev_idx)]
+        te_idx = te_idx[~np.isin(te_idx, rev_idx)]
         self.tr_idx, self.te_idx = tr_idx, te_idx
 
         labels = events["true_label"]
@@ -150,6 +161,12 @@ class FraudDetector:
         p = self.event_df["p_investigator"].values[te]
         a, r = self.investigator.approve_thresh, self.investigator.review_thresh
         dec = np.where(p >= r, "block", np.where(p >= a, "review", "approve"))
+        # behaviour-anomaly escalation (must match Investigator.investigate)
+        beh = self.event_df["p_behav"].values[te]
+        amt = self.event_df["amount_inr"].values[te]
+        esc = (dec == "approve") & (beh >= self.investigator.behaviour_review_thresh) \
+            & (amt >= self.investigator.behaviour_review_min_amount)
+        dec[esc] = "review"
 
         n_fraud = int(y.sum())
         n_legit = int((y == 0).sum())
@@ -309,6 +326,12 @@ class FraudDetector:
         y = events["true_label"].values
         a, r = self.investigator.approve_thresh, self.investigator.review_thresh
         dec = np.where(p >= r, "block", np.where(p >= a, "review", "approve"))
+        # behaviour-anomaly escalation (must match Investigator.investigate)
+        beh = events["p_behav"].values
+        amt = events["amount_inr"].values
+        esc = (dec == "approve") & (beh >= self.investigator.behaviour_review_thresh) \
+            & (amt >= self.investigator.behaviour_review_min_amount)
+        dec[esc] = "review"
         return {
             "approve": int((dec == "approve").sum()),
             "review": int((dec == "review").sum()),
@@ -326,6 +349,11 @@ class FraudDetector:
         a, r = self.investigator.approve_thresh, self.investigator.review_thresh
         events["decision"] = np.where(p >= r, "block",
                                       np.where(p >= a, "review", "approve"))
+        # behaviour-anomaly escalation (must match Investigator.investigate)
+        esc = (events["decision"] == "approve") & (
+            events["p_behav"].values >= self.investigator.behaviour_review_thresh) & (
+            events["amount_inr"].values >= self.investigator.behaviour_review_min_amount)
+        events.loc[esc, "decision"] = "review"
         return events
 
     # ------------------------------------------------------------------ io
