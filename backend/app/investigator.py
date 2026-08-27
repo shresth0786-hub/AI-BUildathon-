@@ -23,7 +23,7 @@ from sklearn.linear_model import LogisticRegression
 
 from app.models.graph_engine import GraphEngine
 
-_ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "artifacts")
+_ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "..", "artifacts")
 
 
 class AILogic:
