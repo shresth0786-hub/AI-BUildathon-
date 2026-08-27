@@ -1,0 +1,12 @@
+# Backend — never commit secrets or model artifacts (regenerate with `python train.py`)
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+backend/artifacts/*
+!backend/artifacts/.gitkeep
+
+# Frontend
+frontend/app/node_modules/
+frontend/app/dist/
