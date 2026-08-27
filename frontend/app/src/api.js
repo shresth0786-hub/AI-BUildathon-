@@ -29,7 +29,7 @@ export const api = {
   rzpStatus: () => get('/rzp/status'),
   demoFraud: () => get('/demo/fraud'),
   demoClean: () => get('/demo/clean'),
-  demoBorderline: () => ({
+  demoBorderline: (phone) => ({
     // a medium-risk payment that triggers the phone-call payment confirmation
     event: {
       user_id: 'usr_rev_demo',
@@ -48,7 +48,7 @@ export const api = {
       is_new_device: true,
       three_ds_passed: true,
       status: 'captured',
-      phone: '+919876543210',
+      phone: phone || import.meta.env.VITE_DEMO_PHONE || '+919876543210',
     },
     history: [],
   }),

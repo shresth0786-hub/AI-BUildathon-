@@ -10,3 +10,4 @@ backend/artifacts/*
 # Frontend
 frontend/app/node_modules/
 frontend/app/dist/
+frontend/app/.env

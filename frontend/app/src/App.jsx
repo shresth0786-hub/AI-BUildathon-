@@ -293,6 +293,7 @@ function PhoneVerificationPanel() {
 function LiveTest({ onInvestigate }) {
   const [running, setRunning] = useState(false)
   const [mode, setMode] = useState('fraud')
+  const [phone, setPhone] = useState(import.meta.env.VITE_DEMO_PHONE || '')
   const [out, setOut] = useState(null)
   const [err, setErr] = useState(null)
 
@@ -300,7 +301,7 @@ function LiveTest({ onInvestigate }) {
     setRunning(true); setErr(null); setOut(null)
     try {
       const body = mode === 'fraud' ? await api.demoFraud()
-        : mode === 'review' ? await api.demoBorderline() : await api.demoClean()
+        : mode === 'review' ? await api.demoBorderline(phone) : await api.demoClean()
       const res = await api.investigate(body)
       setOut(res)
     } catch (e) {
@@ -343,6 +344,13 @@ function LiveTest({ onInvestigate }) {
             <option value="clean">Established customer (clean)</option>
           </select>
         </div>
+        {mode === 'review' && (
+          <div>
+            <label title="Twilio will call this number in real mode">Call number (review)</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)}
+              placeholder="+91XXXXXXXXXX" />
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
           <button className="btn" onClick={run} disabled={running} style={{ width: '100%' }}>
             {running ? 'Scoring…' : 'Investigate'}
