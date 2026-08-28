@@ -1,0 +1,5 @@
+# Keep the runnable launch/setup scripts and env templates OFF GitHub.
+# Viewers see this folder's README only; the runnable copy is kept locally.
+*.ps1
+.env
+.env.example
