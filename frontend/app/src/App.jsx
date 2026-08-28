@@ -326,6 +326,17 @@ function LiveTest({ onInvestigate }) {
   }
 
   const [pvBusy, setPvBusy] = useState(false)
+  const [corrMsg, setCorrMsg] = useState(null)
+  const correct = async (isFraud) => {
+    if (!out?.event_id) return
+    setErr(null); setCorrMsg(null)
+    try {
+      const r = await api.correct(out.event_id, isFraud)
+      setCorrMsg(`Learned: marked as ${isFraud ? 'fraud' : 'clean'} (${r.label === 1 ? 'fraud' : 'clean'}).`)
+    } catch (e) {
+      setErr(e.message)
+    }
+  }
   const phoneAction = async (action) => {
     const pv = out?.phone_verification
     if (!pv) return
@@ -394,6 +405,14 @@ function LiveTest({ onInvestigate }) {
               ))}
             </ul>
           )}
+          <div className="form-row" style={{ marginTop: 10 }}>
+            <span className="muted" style={{ fontSize: 13 }}>Was this decision right?</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn" onClick={() => correct(false)} title="This was clean — correct the model">Mark clean</button>
+              <button className="btn danger" onClick={() => correct(true)} title="This was fraud — correct the model">Mark fraud</button>
+            </div>
+          </div>
+          {corrMsg && <div className="green" style={{ fontSize: 13, marginTop: 8 }}>{corrMsg}</div>}
           {out.phone_verification && <PhoneVerifyBox pv={out.phone_verification} busy={pvBusy} onAction={phoneAction} />}
           <details style={{ marginTop: 12 }}>
             <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>Show full report</summary>
@@ -490,6 +509,84 @@ function TestMetrics({ t }) {
   )
 }
 
+// ------------------------------------------------------------------ continual learning
+function LearningPanel({ onChanged }) {
+  const [fb, setFb] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState(null)
+
+  const refresh = useCallback(() => {
+    api.feedback().then(setFb).catch(() => {})
+  }, [])
+  useEffect(() => {
+    refresh()
+    const t = setInterval(refresh, 5000)
+    return () => clearInterval(t)
+  }, [refresh])
+
+  const retrain = async () => {
+    setBusy(true); setMsg(null)
+    try {
+      const r = await api.retrain()
+      setMsg(`Retrained on ${r.feedback_used} confirmed feedback transactions. AUC ${(r.investigator_auc * 100).toFixed(1)}%.`)
+      refresh()
+      onChanged && onChanged()
+    } catch (e) {
+      setMsg(`Retrain error: ${e.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const st = fb?.status
+  const store = st?.store
+  const corr = st?.corrector
+  return (
+    <div className="card">
+      <h3>Continual learning</h3>
+      <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+        The model learns from each transaction: phone-verification verdicts and manual
+        corrections feed an <b>online correction layer</b> immediately, and are folded
+        into the models on <b>retrain</b> — so past errors are not repeated.
+      </p>
+      <div className="grid grid-4">
+        <div className="score-box">
+          <div className="m">Recorded</div>
+          <div className="p">{store?.total_recorded ?? 0}</div>
+          <div className="muted" style={{ fontSize: 12 }}>scored transactions</div>
+        </div>
+        <div className="score-box">
+          <div className="m">Labelled</div>
+          <div className="p accent">{store?.labelled ?? 0}</div>
+          <div className="muted" style={{ fontSize: 12 }}>confirmed ground truth</div>
+        </div>
+        <div className="score-box">
+          <div className="m">Online updates</div>
+          <div className="p">{corr?.updates ?? 0}</div>
+          <div className="muted" style={{ fontSize: 12 }}>corrector steps</div>
+        </div>
+        <div className="score-box">
+          <div className="m">Unlabelled</div>
+          <div className="p">{store?.unlabelled ?? 0}</div>
+          <div className="muted" style={{ fontSize: 12 }}>awaiting verdict</div>
+        </div>
+      </div>
+      {store?.by_source && Object.keys(store.by_source).length > 0 && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+          Labels by source: {Object.entries(store.by_source)
+            .map(([k, v]) => `${k} ${v}`).join(' · ')}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+        <button className="btn" onClick={retrain} disabled={busy}>
+          {busy ? 'Retraining…' : 'Trigger retrain'}
+        </button>
+        {msg && <span style={{ fontSize: 13 }}>{msg}</span>}
+      </div>
+    </div>
+  )
+}
+
 // ------------------------------------------------------------------ app
 export default function App() {
   const [summary, setSummary] = useState(null)
@@ -563,6 +660,9 @@ export default function App() {
 
       <h2 className="section">Phone-call payment confirmation (review band)</h2>
       <PhoneVerificationPanel sessions={verSessions} mode={verMode} onChange={refreshVer} />
+
+      <h2 className="section">Continual learning</h2>
+      <LearningPanel />
 
       <h2 className="section">Payment stream</h2>
       <EventsTable onSelect={setSelected} />

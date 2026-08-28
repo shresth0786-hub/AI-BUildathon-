@@ -97,6 +97,18 @@ method-mix entropy, failure rate) signals.
   Twilio mode calls are placed with `record=True` and the `call_sid` +
   recording-availability are stored, so call **audio** is captured for audit
   (a console link is shown once the Twilio account is upgraded to billing).
+- **Continual learning:** the model learns from every transaction
+  (`backend/app/feedback.py`). Every scored payment is recorded, then confirmed
+  by a **phone-verification verdict** (confirm→clean, deny→fraud) or a
+  **manual "mark clean / mark fraud"** correction in the dashboard. Two
+  mechanisms improve it without repeating errors:
+    - *Online correction layer* — an online SGD logistic on the ensemble score
+      adapts the decision boundary immediately from each confirmed outcome
+      (defense-only: it may escalate, never weaken, a decision).
+    - *Periodic retrain* — confirmed feedback accumulates in
+      `backend/data/feedback.json` (gitignored) and folds past mistakes back
+      into the ML-risk + Investigator models via `POST /api/learning/retrain`
+      (or the dashboard "Trigger retrain" button), then hot-swaps the live model.
 
 ### 5. API + Dashboard
 - **FastAPI** (`app/main.py`): summary, event stream, per-event investigation,
@@ -172,6 +184,9 @@ checkouts and webhooks:
 | POST   | `/api/verification/{id}/confirm` | Complete the call with the payer's OTP (→ approve/block) |
 | POST   | `/api/verification/{id}/deny`    | Caller denied ownership (→ block)        |
 | POST   | `/api/verification/{id}/resend`  | Regenerate the OTP + re-place the call    |
+| GET    | `/api/feedback`        | Continual-learning status + labelled/unlabelled log |
+| POST   | `/api/feedback/{id}/correct` | Manually mark a transaction clean/fraud  |
+| POST   | `/api/learning/retrain`| Retrain ML-risk + Investigator on confirmed feedback |
 | GET    | `/api/demo/fraud`        | Card-testing burst demo body             |
 | GET    | `/api/demo/clean`        | Clean-customer demo body                 |
 | GET    | `/api/rzp/status`        | Real-key configuration status            |
@@ -194,6 +209,7 @@ razorpay-fraud-detector/
 │  │  │  └─ graph_engine.py     # network graph model
 │  │  ├─ investigator.py        # ensemble + evidence
 │  │  ├─ verification.py        # phone-call payment confirmation (OTP)
+│  │  ├─ feedback.py            # continual learning (feedback log + corrector)
 │  │  ├─ pipeline.py            # orchestration
 │  │  ├─ razorpay_client.py     # optional real-key integration
 │  │  └─ main.py                # FastAPI

@@ -57,4 +57,7 @@ export const api = {
   verConfirm: (id, otp) => post(`/verification/${id}/confirm`, { otp }),
   verDeny: (id) => post(`/verification/${id}/deny`),
   verResend: (id) => post(`/verification/${id}/resend`),
+  feedback: () => get('/feedback'),
+  correct: (id, isFraud) => post(`/feedback/${id}/correct`, { is_fraud: isFraud }),
+  retrain: () => post('/learning/retrain'),
 }

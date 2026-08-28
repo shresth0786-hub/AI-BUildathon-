@@ -49,10 +49,25 @@ class FraudDetector:
     # ------------------------------------------------------------------ build
     def build(self, n_bona_fide: int = 6000, n_fraud: int = 900,
               seed: int = 42, save: bool = True, split: float = 0.8,
-              n_reviewish: int = 120) -> dict:
+              n_reviewish: int = 120, extra_events: list[dict] | None = None) -> dict:
         t0 = time.time()
         events = generate_events(n_bona_fide=n_bona_fide, n_fraud=n_fraud,
                                  seed=seed, n_reviewish=n_reviewish)
+        # Continual learning: confirmed-feedback transactions (with a true label
+        # and true_label set) are appended so the supervised models are retrained
+        # on past mistakes as well as the synthetic base.
+        extra_rows = []
+        if extra_events:
+            for i, fe in enumerate(extra_events):
+                row = self._normalize_event(fe, f"fb_{i}")
+                row["true_label"] = int(fe.get("label", 0))
+                extra_rows.append(row)
+        events = pd.concat([events, pd.DataFrame(extra_rows)], ignore_index=True)
+        # Mark confirmed-feedback rows (ids are live_*_fb_N from _normalize_event)
+        # so they are ALWAYS learnable, even if they belong to a review-band user
+        # that normal build() would hold out of training.
+        events["is_feedback"] = events["event_id"].apply(
+            lambda eid: 1 if str(eid).startswith("live_") else 0)
         self.event_df = events
         self.fe = FeatureEngineer()
         feat = self.fe.build(events)
@@ -72,7 +87,11 @@ class FraudDetector:
         # that the models have never been fit on, so they score as genuinely
         # uncertain (the review band) rather than being memorised as clean.
         rev_mask = events["user_id"].astype(str).str.startswith("usr_rev")
-        rev_idx = np.where(rev_mask.values)[0]
+        # Confirmed-feedback events are ALWAYS learnable: even if they belong to
+        # a review-band (usr_rev*) user, the human verdict makes them gold labels,
+        # so we keep them in the training pool instead of holding them out.
+        is_fb = events.get("is_feedback", pd.Series(0, index=events.index)).values == 1
+        rev_idx = np.where(rev_mask.values & ~is_fb)[0]
         tr_idx = tr_idx[~np.isin(tr_idx, rev_idx)]
         te_idx = te_idx[~np.isin(te_idx, rev_idx)]
         self.tr_idx, self.te_idx = tr_idx, te_idx
@@ -143,6 +162,47 @@ class FraudDetector:
             "build_seconds": round(time.time() - t0, 2),
         }
         return self.summary
+
+    # ------------------------------------------------------- continual retrain
+    def retrain_with_feedback(self, feedback: list[dict], seed: int = 42) -> dict:
+        """Retrain the full supervised stack on the original synthetic data PLUS
+        confirmed-feedback transactions, so past decision errors are learned and
+        not repeated. Uses the same seed/split as the initial build for a fair,
+        reproducible comparison. Re-persists all artifacts."""
+        _require(self)
+        base = self.event_df
+        extra = [{
+            "user_id": r["event"].get("user_id", ""),
+            "device_id": r["event"].get("device_id", ""),
+            "card_last4": r["event"].get("card_last4", "0000"),
+            "amount_inr": float(r["event"].get("amount_inr", 0)),
+            "merchant": r["event"].get("merchant", ""),
+            "payment_method": r["event"].get("payment_method", "card"),
+            "card_bin_country": r["event"].get("card_bin_country", "IN"),
+            "ip_geo_match": bool(r["event"].get("ip_geo_match", True)),
+            "is_international": bool(r["event"].get("is_international", False)),
+            "billing_zip": str(r["event"].get("billing_zip", "000000")),
+            "shipping_zip": str(r["event"].get("shipping_zip", "000000")),
+            "typing_seconds": float(r["event"].get("typing_seconds", 10.0)),
+            "attempt_count": int(r["event"].get("attempt_count", 1)),
+            "is_new_device": bool(r["event"].get("is_new_device", False)),
+            "three_ds_passed": bool(r["event"].get("three_ds_passed", True)),
+            "status": r["event"].get("status", "captured"),
+            "event_ts": int(r["event"].get("event_ts", time.time_ns())),
+            "label": int(r.get("label", 0)),
+        } for r in feedback if r.get("label") is not None]
+
+        summary = self.build(
+            seed=seed,
+            save=True,
+            extra_events=extra,
+        )
+        self.save_all()
+        return {
+            **summary,
+            "retrain": True,
+            "feedback_used": len(extra),
+        }
 
     # ------------------------------------------------------- held-out metrics
     def _held_out_metrics(self) -> dict:
@@ -300,7 +360,46 @@ class FraudDetector:
         p_grf = float(self.graph.score_events(df).values[idx_last])
         self.investigator.event_df = df
         self.investigator.feat_df = feat
-        return self.investigator.investigate(idx_last, p_ml, p_beh, p_grf)
+        res = self.investigator.investigate(idx_last, p_ml, p_beh, p_grf)
+
+        # ---- continual learning: record this transaction and apply the
+        #      online correction so past feedback immediately nudges decisions.
+        try:
+            from app.feedback import get_controller
+            lc = get_controller()
+            p_raw = float(res["scores"]["investigator"])
+            p_corr = lc.corrector.adjust(p_raw)
+            feature_snap = {
+                c: (None if feat[c].isna().iloc[idx_last] else float(feat[c].iloc[idx_last]))
+                for c in feat.columns
+            }
+            lc.record(
+                str(res["event_id"]), target, feature_snap,
+                res["scores"], str(res["decision"]), p_corr,
+            )
+            corr_decision = self._decide(p_corr)
+            # Defense-only: the learned feedback may only ESCALATE a decision
+            # (approve -> review/block) from past confirmed fraud, never weaken
+            # an existing flag. This prevents sparse feedback from easing the
+            # system into approving what was previously held.
+            rank = {"approve": 0, "review": 1, "block": 2}
+            base_rank = rank.get(res["decision"], 0)
+            corr_rank = rank.get(corr_decision, 0)
+            if corr_rank > base_rank:
+                res = {**res}
+                res["decision"] = corr_decision
+                res["p_corrected"] = round(p_corr, 4)
+                res["evidence"] = (list(res.get("evidence") or []) + [{
+                    "model": "feedback", "signal": "online_correction",
+                    "detail": (f"escalated to {res['decision']} from learned "
+                               f"feedback on past fraud (adjusted p {p_corr:.2f})"),
+                    "weight": round(p_corr, 3),
+                }])
+                res["report"] += (f"\n[online correction] learned feedback escalated "
+                                  f"this decision to {res['decision'].upper()}.")
+        except Exception:  # pragma: no cover - learning must never break scoring
+            pass
+        return res
 
     def _detect_ring(self, row) -> list[str]:
         hints = []

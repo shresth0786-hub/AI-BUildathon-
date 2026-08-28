@@ -220,6 +220,54 @@ def verify_event(req: VerifyEventRequest):
         raise HTTPException(500, f"verification setup failed: {exc}") from exc
 
 
+# ---------------------------------------------------------------- continual learning
+class CorrectRequest(BaseModel):
+    is_fraud: bool = Field(..., description="true verdict for this transaction")
+
+
+@app.get("/api/feedback")
+def feedback_list():
+    """Continual-learning status plus the labelled (and unlabelled) transaction log."""
+    from app.feedback import get_controller
+    c = get_controller()
+    return {"status": c.status(), "records": c.records()}
+
+
+@app.post("/api/feedback/{event_id}/correct")
+def feedback_correct(event_id: str, body: CorrectRequest):
+    """Manually correct the decision for a previously scored transaction.
+    Feeds the online corrector immediately and queues it for the next retrain."""
+    from app.feedback import get_controller
+    c = get_controller()
+    rec = c.store.get(event_id)
+    if rec is None:
+        raise HTTPException(404, "transaction not found (run /api/investigate first)")
+    ok = c.label(event_id, 1 if body.is_fraud else 0, "manual", corrected=True)
+    return {"ok": bool(ok), "label": 1 if body.is_fraud else 0,
+            "status": c.status(), "record": c.store.get(event_id)}
+
+
+@app.post("/api/learning/retrain")
+def learning_retrain(seed: int = Query(42)):
+    """Retrain the supervised models (ML Risk + Investigator) on the original
+    synthetic data PLUS all confirmed feedback, then hot-swap the live model."""
+    global _detector
+    from app.feedback import get_controller
+    from app.pipeline import FraudDetector
+    c = get_controller()
+    labelled = c.store.labelled()
+    fresh = FraudDetector.load()
+    try:
+        summary = fresh.retrain_with_feedback(labelled, seed=seed)
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(500, f"retrain failed: {exc}") from exc
+    _detector = fresh
+    return {"ok": True, "feedback_used": summary.get("feedback_used", 0),
+            "investigator_auc": summary.get("investigator_auc"),
+            "ml_auc": summary.get("ml_auc"),
+            "test": summary.get("test")}
+
+
 # ------------------------------------------------------------------ razorpay
 @app.get("/api/rzp/status")
 def rzp_status():

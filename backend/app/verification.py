@@ -204,12 +204,14 @@ class PhoneVerifier:
             ver["status"] = "approved"
             ver["resolved_at"] = time.time()
             ver["final_action"] = "approve"
+            self._feed_label(ver, 0, "otp_confirm")
         else:
             if ver["attempts"] >= ver["max_attempts"]:
                 ver["status"] = "blocked"
                 ver["resolved_at"] = time.time()
                 ver["reason"] = "too_many_failed_otp"
                 ver["final_action"] = "block"
+                self._feed_label(ver, 1, "otp_deny")
             else:
                 ver["status"] = "pending"       # allow a retry
         self._save()
@@ -225,6 +227,7 @@ class PhoneVerifier:
             ver["reason"] = "caller_denied_ownership"
             ver["final_action"] = "block"
             ver["resolved_at"] = time.time()
+            self._feed_label(ver, 1, "otp_deny")
         self._save()
         return self._public(ver)
 
@@ -253,6 +256,19 @@ class PhoneVerifier:
                 sorted(self._store.values(), key=lambda v: v["created_at"], reverse=True)]
 
     # ------------------------------------------------------------------ util
+    @staticmethod
+    def _feed_label(ver: dict, label: int, source: str) -> None:
+        """Push a confirmed verdict to the continual-learning feedback loop so
+        the model learns from the phone call (approve->clean, deny->fraud)."""
+        event_id = ver.get("event_id")
+        if not event_id:
+            return
+        try:
+            from app.feedback import get_controller
+            get_controller().label(event_id, label, source)
+        except Exception:  # pragma: no cover - learning must not break the call
+            pass
+
     @staticmethod
     def _public(ver: dict) -> dict:
         """Never expose internals (raw OTP is shown for the simulated demo so an
