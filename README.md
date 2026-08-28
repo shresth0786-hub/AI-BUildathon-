@@ -91,6 +91,12 @@ method-mix entropy, failure rate) signals.
   "review-ish" legitimate population is held out of training and escalated into
   the `review` band (behaviour-anomaly + high-value guard) so this flow is
   demonstrable without hurting the honest held-out metrics.
+- **Persistent recorded-call log:** every verification session is written to
+  `backend/data/verifications.json` (gitignored) so the call log survives a
+  backend restart and appears on the dashboard as "Recorded calls". In real
+  Twilio mode calls are placed with `record=True` and the `call_sid` +
+  recording-availability are stored, so call **audio** is captured for audit
+  (a console link is shown once the Twilio account is upgraded to billing).
 
 ### 5. API + Dashboard
 - **FastAPI** (`app/main.py`): summary, event stream, per-event investigation,
