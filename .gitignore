@@ -6,6 +6,7 @@ __pycache__/
 venv/
 backend/artifacts/*
 !backend/artifacts/.gitkeep
+backend/data/*
 
 # Frontend
 frontend/app/node_modules/

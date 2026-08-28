@@ -33,6 +33,7 @@ Criteria to confirm the payer is legitimate (all must hold to APPROVE):
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -48,6 +49,7 @@ except Exception:  # noqa: BLE001
 _MAX_ATTEMPTS = 3            # wrong OTP attempts before we escalate to BLOCK
 _OTP_TTL_SECONDS = 300       # OTP expires after 5 minutes
 _OTP_POOL = "0123456789"
+_RECORD_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "verifications.json")
 
 
 def _generate_otp(length: int = 6) -> str:
@@ -68,6 +70,29 @@ class PhoneVerifier:
         self.max_attempts = max_attempts
         self.otp_ttl = otp_ttl
         self._store: dict[str, dict] = {}
+        self._load()
+
+    # -------------------------------------------------- persistent call record
+    def _load(self) -> None:
+        """Restore previously 'recorded' verification sessions from disk so the
+        call log survives a backend restart (best-effort; missing/corrupt file
+        simply means an empty log)."""
+        try:
+            with open(_RECORD_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self._store = data
+        except (FileNotFoundError, ValueError, OSError):
+            self._store = {}
+
+    def _save(self) -> None:
+        """Persist every session (the 'recorded call' log) to append-only JSON."""
+        try:
+            os.makedirs(os.path.dirname(_RECORD_FILE), exist_ok=True)
+            with open(_RECORD_FILE, "w", encoding="utf-8") as f:
+                json.dump(self._store, f, indent=2)
+        except OSError:  # pragma: no cover - persistence is best-effort
+            pass
 
     # ------------------------------------------------------------- env/status
     @staticmethod
@@ -115,6 +140,7 @@ class PhoneVerifier:
         self._store[vid] = ver
         self._place_call(ver)
         ver["status"] = "pending"                # awaiting OTP confirmation
+        self._save()
         return self._public(ver)
 
     def _place_call(self, ver: dict) -> None:
@@ -125,19 +151,25 @@ class PhoneVerifier:
                 # telephony client is only non-None in real mode
                 client = _TwilioClient(os.getenv("TWILIO_ACCOUNT_SID"),
                                        os.getenv("TWILIO_AUTH_TOKEN"))
-                client.calls.create(
+                call = client.calls.create(
                     to=ver["phone"], from_=os.getenv("TWILIO_PHONE_NUMBER"),
+                    record=True,      # record the call audio (PII: core Twilio media)
                     twiml=f"<Response><Say>Your payment of "
                           f"{ver['amount_inr']} rupees at {ver['merchant']} "
                           f"requires verification. Your code is "
                           f"{ver['otp']}.</Say></Response>",
                 )
                 ver["call_delivered"] = "real"
+                ver["call_sid"] = getattr(call, "sid", None)
+                # best-effort recording URL (fetchable later via Twilio API)
+                ver["recording_available"] = True
             except Exception as exc:  # noqa: BLE001
                 ver["call_delivered"] = f"real-failed({exc})"
                 ver["call_delivered"] = "simulated-fallback"
+                ver["recording_available"] = False
         else:
             ver["call_delivered"] = "simulated"
+            ver["recording_available"] = False
 
     @staticmethod
     def _build_call_script(event: dict, otp: str) -> list[str]:
@@ -180,6 +212,7 @@ class PhoneVerifier:
                 ver["final_action"] = "block"
             else:
                 ver["status"] = "pending"       # allow a retry
+        self._save()
         return self._public(ver)
 
     def deny(self, verification_id: str) -> dict:
@@ -192,6 +225,7 @@ class PhoneVerifier:
             ver["reason"] = "caller_denied_ownership"
             ver["final_action"] = "block"
             ver["resolved_at"] = time.time()
+        self._save()
         return self._public(ver)
 
     def resend(self, verification_id: str) -> dict:
@@ -205,6 +239,7 @@ class PhoneVerifier:
                                  f"send {ver['otp']} and ask them to confirm it.")
         ver["status"] = "pending"
         self._place_call(ver)
+        self._save()
         return self._public(ver)
 
     def get(self, verification_id: str) -> dict:

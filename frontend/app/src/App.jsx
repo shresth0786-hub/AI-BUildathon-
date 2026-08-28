@@ -238,25 +238,39 @@ function PhoneVerifyBox({ pv, busy, onAction }) {
         <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>Call script (agent reads this)</summary>
         {(pv.call_script || []).map((line, i) => <div key={i} className="muted" style={{ fontSize: 13, marginTop: 4 }}>• {line}</div>)}
       </details>
+      {(pv.call_delivered || pv.call_sid || pv.recording_available) && (
+        <div className="rec-log" style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #24304d' }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Recorded call</div>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Delivery: <b>{pv.call_delivered || '—'}</b>
+            {pv.call_sid && <> · SID <span className="mono">{pv.call_sid}</span></>}
+            {pv.created_at && <> · <span className="mono">{new Date(pv.created_at * 1000).toLocaleString()}</span></>}
+          </div>
+          {pv.recording_available && pv.call_sid && (
+            <div style={{ fontSize: 13, marginTop: 4 }}>
+              <span className="pill online">Recording enabled</span>{' '}
+              <a className="muted" style={{ textDecoration: 'underline' }} target="_blank" rel="noreferrer"
+                href={`https://console.twilio.com/us1/develop/voice/manage/recordings?sid=${pv.call_sid}`}>
+                View audio in Twilio →
+              </a>
+            </div>
+          )}
+          {!pv.recording_available && pv.call_delivered !== 'simulated' && (
+            <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+              Recording unavailable (upgrade Twilio to billing to enable call audio).
+            </div>
+          )}
+        </div>
+      )}
       {pv.status === 'approved' && <div className="green" style={{ marginTop: 8 }}>Payer confirmed ownership — payment approved.</div>}
       {pv.status === 'blocked' && <div className="red" style={{ marginTop: 8 }}>Verification failed — payment blocked: {pv.reason || 'caller denied'}</div>}
     </div>
   )
 }
 
-function PhoneVerificationPanel() {
-  const [sessions, setSessions] = useState([])
-  const [mode, setMode] = useState('simulated')
+function PhoneVerificationPanel({ sessions, mode, onChange }) {
   const [busyId, setBusyId] = useState(null)
   const [err, setErr] = useState(null)
-
-  const refresh = useCallback(() => {
-    api.verification().then((d) => {
-      setSessions(d.sessions || [])
-      setMode(d.status?.mode || 'simulated')
-    }).catch(() => {})
-  }, [])
-  useEffect(refresh, [refresh])
 
   const act = async (id, action, otp) => {
     setErr(null); setBusyId(id)
@@ -264,7 +278,7 @@ function PhoneVerificationPanel() {
       if (action === 'confirm') await api.verConfirm(id, otp)
       else if (action === 'resend') await api.verResend(id)
       else await api.verDeny(id)
-      refresh()
+      onChange && onChange()
     } catch (e) {
       setErr(e.message)
     } finally {
@@ -391,22 +405,47 @@ function LiveTest({ onInvestigate }) {
   )
 }
 
-// ------------------------------------------------------------------ architecture
-function Architecture() {
-  const nodes = [
-    'Razorpay Test Payments', 'Feature Engineering', 'ML Risk Model', 'Behaviour AI',
-    'Graph Engine', 'AI Investigator', 'Decision + Evidence', 'React Dashboard',
-  ]
+// ------------------------------------------------------------------ user & payment details
+function UserPaymentDetail({ pv }) {
+  if (!pv) {
+    return (
+      <div className="card">
+        <h3>User &amp; payment details</h3>
+        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+          No reviewed payment yet — run the <b>Borderline</b> scenario in <i>Live fraud check</i>
+          to open a phone-verification session and populate this card.
+        </p>
+      </div>
+    )
+  }
+  const when = new Date((pv.created_at || 0) * 1000).toLocaleString()
+  const dec = pv.status === 'approved' ? 'approve' : pv.status === 'blocked' ? 'block' : 'review'
   return (
     <div className="card">
-      <h3>Architecture</h3>
-      <div className="arch">
-        {nodes.map((n, i) => (
-          <span key={n} style={{ display: 'contents' }}>
-            {i > 0 && <span className="arrow">→</span>}
-            <span className={`node ${[3, 4].includes(i) ? 'hot' : ''}`}>{n}</span>
-          </span>
-        ))}
+      <h3>User &amp; payment details</h3>
+      <div className="grid grid-2">
+        <div>
+          <div className="label" style={{ fontSize: 12 }}>Payment</div>
+          <div className="value" style={{ fontSize: 18 }}>₹{pv.amount_inr?.toLocaleString('en-IN')}</div>
+          <div className="muted" style={{ fontSize: 13 }}>{pv.merchant} · {pv.event_id}</div>
+        </div>
+        <div>
+          <div className="label" style={{ fontSize: 12 }}>Payer</div>
+          <div className="value" style={{ fontSize: 18 }}>{pv.user_id || '—'}</div>
+          <div className="muted" style={{ fontSize: 13 }}>phone {pv.phone} · card ••{pv.card_last4}</div>
+        </div>
+      </div>
+      <div className="spacer" style={{ height: 10 }} />
+      <div className="bar-row">
+        <span className="name">Verification</span>
+        <span className="bar">
+          <span className="fill"
+            style={{ width: '100%', background: pv.status === 'approved' ? C.green : pv.status === 'blocked' ? C.red : C.amber }} />
+        </span>
+        <span className="val"><Badge decision={dec} /></span>
+      </div>
+      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+        {pv.status.toUpperCase()} · reviewed {when}
       </div>
     </div>
   )
@@ -458,15 +497,26 @@ export default function App() {
   const [rzp, setRzp] = useState(null)
   const [tm, setTm] = useState(null)
   const [selected, setSelected] = useState(null)
+  const [verSessions, setVerSessions] = useState([])
+  const [verMode, setVerMode] = useState('simulated')
+
+  const refreshVer = useCallback(() => {
+    api.verification().then((d) => {
+      setVerSessions(d.sessions || [])
+      setVerMode(d.status?.mode || 'simulated')
+    }).catch(() => {})
+  }, [])
 
   const load = useCallback(() => {
     Promise.all([api.summary(), api.vectors(), api.rzpStatus(), api.testMetrics()])
       .then(([s, v, r, t]) => { setSummary(s); setVectors(v); setRzp(r); setTm(t) })
       .catch(() => {})
-  }, [])
+    refreshVer()
+  }, [refreshVer])
   useEffect(load, [load])
 
   const metrics = summary?.decision_metrics
+  const latestVer = [...verSessions].sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0]
 
   return (
     <div className="wrap">
@@ -484,7 +534,7 @@ export default function App() {
         </div>
       </header>
 
-      <Architecture />
+      <UserPaymentDetail pv={latestVer} />
 
       <h2 className="section">Overview</h2>
       <div className="grid grid-4">
@@ -512,7 +562,7 @@ export default function App() {
       </div>
 
       <h2 className="section">Phone-call payment confirmation (review band)</h2>
-      <PhoneVerificationPanel />
+      <PhoneVerificationPanel sessions={verSessions} mode={verMode} onChange={refreshVer} />
 
       <h2 className="section">Payment stream</h2>
       <EventsTable onSelect={setSelected} />
