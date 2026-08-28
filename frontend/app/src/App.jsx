@@ -425,47 +425,72 @@ function LiveTest({ onInvestigate }) {
   )
 }
 
-// ------------------------------------------------------------------ user & payment details
-function UserPaymentDetail({ pv }) {
-  if (!pv) {
-    return (
-      <div className="card">
-        <h3>User &amp; payment details</h3>
-        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-          No reviewed payment yet — run the <b>Borderline</b> scenario in <i>Live fraud check</i>
-          to open a phone-verification session and populate this card.
-        </p>
-      </div>
-    )
-  }
-  const when = new Date((pv.created_at || 0) * 1000).toLocaleString()
-  const dec = pv.status === 'approved' ? 'approve' : pv.status === 'blocked' ? 'block' : 'review'
+// ------------------------------------------------------------------ recent transactions + user detail
+function RecentTransactions() {
+  const [rows, setRows] = useState([])
+  const [users, setUsers] = useState({})
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    Promise.all([api.events('', 100).catch(() => []), api.users().catch(() => ({ users: [] }))])
+      .then(([evs, ud]) => {
+        const byId = {}
+        ;(ud.users || []).forEach((u) => { byId[u.user_id] = u })
+        setUsers(byId)
+        setRows(evs)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 8000)
+    return () => clearInterval(t)
+  }, [load])
+
   return (
     <div className="card">
-      <h3>User &amp; payment details</h3>
-      <div className="grid grid-2">
-        <div>
-          <div className="label" style={{ fontSize: 12 }}>Payment</div>
-          <div className="value" style={{ fontSize: 18 }}>₹{pv.amount_inr?.toLocaleString('en-IN')}</div>
-          <div className="muted" style={{ fontSize: 13 }}>{pv.merchant} · {pv.event_id}</div>
-        </div>
-        <div>
-          <div className="label" style={{ fontSize: 12 }}>Payer</div>
-          <div className="value" style={{ fontSize: 18 }}>{pv.user_id || '—'}</div>
-          <div className="muted" style={{ fontSize: 13 }}>phone {pv.phone} · card ••{pv.card_last4}</div>
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>Recent transactions &amp; user details</h3>
+        <button className="btn ghost" onClick={load}>Refresh</button>
+      </div>
+      <div className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+        Latest scored payments (admin view) — user name &amp; contact shown when a live investigation stored them.
       </div>
       <div className="spacer" style={{ height: 10 }} />
-      <div className="bar-row">
-        <span className="name">Verification</span>
-        <span className="bar">
-          <span className="fill"
-            style={{ width: '100%', background: pv.status === 'approved' ? C.green : pv.status === 'blocked' ? C.red : C.amber }} />
-        </span>
-        <span className="val"><Badge decision={dec} /></span>
-      </div>
-      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-        {pv.status.toUpperCase()} · reviewed {when}
+      <div style={{ overflowX: 'auto' }}>
+        <table>
+          <thead>
+            <tr><th>Event</th><th>User</th><th>Contact</th><th>Merchant</th><th>Amount</th><th>Risk</th><th>Decision</th><th>Vector</th></tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={8} className="muted">Loading…</td></tr>}
+            {!loading && rows.length === 0 && <tr><td colSpan={8} className="muted">No transactions yet.</td></tr>}
+            {rows.map((r) => {
+              const u = users[r.user_id]
+              return (
+                <tr key={r.event_id}>
+                  <td className="mono">{r.event_id.slice(0, 18)}</td>
+                  <td>
+                    <div>{u?.name || r.user_id}</div>
+                    <div className="muted" style={{ fontSize: 12 }}>{r.user_id} {u && r.user_id !== u.name ? '' : ''}</div>
+                  </td>
+                  <td className="muted" style={{ fontSize: 13 }}>
+                    {u ? `${u.phone || '—'} · ••${u.card_last4 || '—'}` : '—'}
+                  </td>
+                  <td>{r.merchant}</td>
+                  <td>₹{r.amount_inr.toLocaleString('en-IN')}</td>
+                  <td style={{ color: r.p_investigator > 0.6 ? C.red : r.p_investigator > 0.35 ? C.amber : C.green }}>
+                    {(r.p_investigator * 100).toFixed(1)}%
+                  </td>
+                  <td><Badge decision={r.decision} /></td>
+                  <td className="muted">{r.fraud_vector ? r.fraud_vector.replace(/_/g, ' ') : '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )
@@ -614,7 +639,6 @@ export default function App() {
   useEffect(load, [load])
 
   const metrics = summary?.decision_metrics
-  const latestVer = [...verSessions].sort((a, b) => (b.created_at || 0) - (a.created_at || 0))[0]
 
   return (
     <div className="wrap">
@@ -632,7 +656,7 @@ export default function App() {
         </div>
       </header>
 
-      <UserPaymentDetail pv={latestVer} />
+      <RecentTransactions />
 
       <h2 className="section">Overview</h2>
       <div className="grid grid-4">
