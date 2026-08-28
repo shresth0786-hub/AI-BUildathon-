@@ -23,7 +23,7 @@ export const api = {
   summary: () => get('/summary'),
   testMetrics: () => get('/test-metrics'),
   events: (risk, limit = 250) =>
-    get(`/events${risk ? `?risk=${risk}` : ''}&limit=${limit}`),
+    get(`/events?${risk ? `risk=${risk}&` : ''}limit=${limit}`),
   event: (id) => get(`/events/${id}`),
   vectors: () => get('/vectors'),
   rzpStatus: () => get('/rzp/status'),
