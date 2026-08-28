@@ -118,6 +118,14 @@ method-mix entropy, failure rate) signals.
   fraud-vector breakdown, live payment check, clickable investigation reports,
   and a **phone-verification panel** (run the "Borderline — phone verify"
   scenario → see OTP + call script → confirm / deny / resend).
+- **Admin Q&A (RAG):** an admin can ask *"what's the issue and what should I do
+  about it?"* (`backend/app/rag.py` + `rag_knowledge.py`). A local TF-IDF
+  retrieval index over a curated, code-grounded runbook (13 issues: false
+  positives, false negatives, card testing, ATO, review backlog, Twilio, retrain,
+  thresholds, …) matches the question and returns a structured
+  **Issue → Diagnosis → What to do** answer, enriched with **live state** (test
+  metrics, continual-learning counts, pending verifications). Runs **fully
+  offline** — no embedding server or API key required.
 
 ---
 
@@ -187,6 +195,9 @@ checkouts and webhooks:
 | GET    | `/api/feedback`        | Continual-learning status + labelled/unlabelled log |
 | POST   | `/api/feedback/{id}/correct` | Manually mark a transaction clean/fraud  |
 | POST   | `/api/learning/retrain`| Retrain ML-risk + Investigator on confirmed feedback |
+| GET    | `/api/rag/status`       | RAG engine info (entries / chunks)       |
+| GET    | `/api/rag/knowledge`    | List the known-issue runbook topics      |
+| POST   | `/api/rag/ask`          | Admin Q&A: "what's the issue & what to do" (grounded + live state) |
 | GET    | `/api/demo/fraud`        | Card-testing burst demo body             |
 | GET    | `/api/demo/clean`        | Clean-customer demo body                 |
 | GET    | `/api/rzp/status`        | Real-key configuration status            |
@@ -210,6 +221,8 @@ razorpay-fraud-detector/
 │  │  ├─ investigator.py        # ensemble + evidence
 │  │  ├─ verification.py        # phone-call payment confirmation (OTP)
 │  │  ├─ feedback.py            # continual learning (feedback log + corrector)
+│  │  ├─ rag_knowledge.py       # admin Q&A runbook (issues & remedies)
+│  │  ├─ rag.py                 # RAG engine (TF-IDF retrieval + grounded answer)
 │  │  ├─ pipeline.py            # orchestration
 │  │  ├─ razorpay_client.py     # optional real-key integration
 │  │  └─ main.py                # FastAPI

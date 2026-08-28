@@ -220,6 +220,50 @@ def verify_event(req: VerifyEventRequest):
         raise HTTPException(500, f"verification setup failed: {exc}") from exc
 
 
+# ------------------------------------------------------------------ RAG / admin Q&A
+class RagRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=1000)
+
+
+@app.get("/api/rag/status")
+def rag_status():
+    from app.rag import get_rag
+    return get_rag().status()
+
+
+@app.get("/api/rag/knowledge")
+def rag_knowledge():
+    from app.rag import get_rag
+    return {"issues": get_rag().knowledge()}
+
+
+@app.post("/api/rag/ask")
+def rag_ask(req: RagRequest):
+    """Admin Q&A: 'what is the issue and what should I do about it?'. Retrieves
+    the best-matching known-issue runbook and grounds the answer with LIVE state
+    (test metrics, continual-learning status, pending verifications)."""
+    from app.rag import get_rag
+    det = get_detector()
+    live = {"test": det.test_metrics()}
+    try:
+        from app.feedback import get_controller
+        live["feedback"] = get_controller().status()
+    except Exception:  # pragma: no cover
+        live["feedback"] = {}
+    try:
+        from app.verification import verifier
+        live["verification"] = {"status": verifier().status()}
+    except Exception:  # pragma: no cover
+        live["verification"] = {}
+    res = get_rag().ask(req.question, live=live)
+    return {
+        "question": req.question,
+        "answer": res.answer,
+        "sources": res.sources,
+        "top": res.top,
+    }
+
+
 # ---------------------------------------------------------------- continual learning
 class CorrectRequest(BaseModel):
     is_fraud: bool = Field(..., description="true verdict for this transaction")

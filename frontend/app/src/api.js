@@ -60,4 +60,7 @@ export const api = {
   feedback: () => get('/feedback'),
   correct: (id, isFraud) => post(`/feedback/${id}/correct`, { is_fraud: isFraud }),
   retrain: () => post('/learning/retrain'),
+  ragAsk: (question) => post('/rag/ask', { question }),
+  ragKnowledge: () => get('/rag/knowledge'),
+  ragStatus: () => get('/rag/status'),
 }
