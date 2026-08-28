@@ -181,6 +181,52 @@ checkouts and webhooks:
 
 ---
 
+## RAG & Admin Q&A pipeline
+
+Lets an admin ask *"what's the issue and what should I do about it?"* — about a
+type of fraud **or** a real, current user/payment — and get a grounded, actionable
+answer. It is a small, self-contained RAG (retrieval-augmented generation) that
+runs **fully offline** (no embedding server, no API key).
+
+### How it works
+
+```
+  USER DATABASE (users.json) ──┐
+  live events (dataset)       ─┤                       runbook (13 issues)
+  feedback / learned labels   ─┼─►  build_live_context()  ─►  RAGEngine.ask()  ─►  answer
+  phone verifications         ─┤   (rag_pipeline.py)         (rag.py)                │
+  test metrics                ─┘                                                admin UI
+                                                                                 (AdminRagPanel.jsx)
+```
+
+The pipeline (`backend/app/rag_pipeline.py`) gathers every live source into one
+context, hands it to a local **TF-IDF** retriever that indexes the dataset as
+searchable chunks, and returns a structured **Issue → Diagnosis → What to do**
+answer plus a **CURRENT STATE** block. The index is rebuilt automatically as new
+payments, feedback and users arrive, so the RAG *learns from the live dataset*.
+
+What is indexed (searchable by the admin):
+| Source | Data | Example question |
+|--------|------|------------------|
+| **Runbook** (`rag_knowledge.py`) | 13 curated issues & remedies | "how do I fix a false-positive surge?" |
+| **Events** | recent scored payments (scores, decision, vector) | "why was merchant X blocked?" |
+| **User DB** (`users.json`) | persisted live-investigated users (name, phone, card, device, amount, decision, scores) | "tell me about user usr_rahul" |
+| **Insights** | mined aggregates (top fraud/blocked merchants, vectors, decisions) | "which merchant has the most fraud right now?" |
+| **Feedback** | confirmed clean/fraud labels | "what fraud did the model learn to catch?" |
+| **Phone calls** | verification sessions | "are there pending phone verifications?" |
+
+### Separate files (one concern each)
+
+| Concern | File |
+|---------|------|
+| RAG retrieval + generation | `backend/app/rag.py` |
+| Static runbook (issues & remedies) | `backend/app/rag_knowledge.py` |
+| **Pipeline** (connects DB + live sources to the RAG + API) | `backend/app/rag_pipeline.py` |
+| **User database** (persists name & user details) | `backend/app/user_db.py` → `backend/data/users.json` |
+| Frontend admin panel | `frontend/app/src/components/AdminRagPanel.jsx` |
+
+---
+
 ## API endpoints
 
 | Method | Path                     | Description                              |
@@ -198,9 +244,12 @@ checkouts and webhooks:
 | GET    | `/api/feedback`        | Continual-learning status + labelled/unlabelled log |
 | POST   | `/api/feedback/{id}/correct` | Manually mark a transaction clean/fraud  |
 | POST   | `/api/learning/retrain`| Retrain ML-risk + Investigator on confirmed feedback |
-| GET    | `/api/rag/status`       | RAG engine info (entries / chunks)       |
+| GET    | `/api/rag/status`       | RAG engine + pipeline info (entries / chunks / sources) |
 | GET    | `/api/rag/knowledge`    | List the known-issue runbook topics      |
 | POST   | `/api/rag/ask`          | Admin Q&A: "what's the issue & what to do" (grounded + live state) |
+| GET    | `/api/users`            | User DB: stored live-investigated users (+ stats, filter by risk) |
+| GET    | `/api/users/{user_id}`  | One user's stored name + details          |
+| GET    | `/api/users/stats`      | User-DB counts by decision                |
 | GET    | `/api/demo/fraud`        | Card-testing burst demo body             |
 | GET    | `/api/demo/clean`        | Clean-customer demo body                 |
 | GET    | `/api/rzp/status`        | Real-key configuration status            |
@@ -224,8 +273,10 @@ razorpay-fraud-detector/
 │  │  ├─ investigator.py        # ensemble + evidence
 │  │  ├─ verification.py        # phone-call payment confirmation (OTP)
 │  │  ├─ feedback.py            # continual learning (feedback log + corrector)
+│  │  ├─ user_db.py             # user database (persists name + user details)
 │  │  ├─ rag_knowledge.py       # admin Q&A runbook (issues & remedies)
 │  │  ├─ rag.py                 # RAG engine (TF-IDF retrieval + grounded answer)
+│  │  ├─ rag_pipeline.py        # RAG pipeline (DB + live sources → RAG → API)
 │  │  ├─ pipeline.py            # orchestration
 │  │  ├─ razorpay_client.py     # optional real-key integration
 │  │  └─ main.py                # FastAPI
@@ -234,7 +285,8 @@ razorpay-fraud-detector/
 │  └─ .env.example
 ├─ frontend/
 │  └─ app/                      # React (Vite) dashboard
-│     └─ src/App.jsx
+│     ├─ src/App.jsx
+│     └─ src/components/AdminRagPanel.jsx   # RAG admin Q&A panel
 ├─ start.ps1                    # launch both (Windows)
 └─ README.md
 ```

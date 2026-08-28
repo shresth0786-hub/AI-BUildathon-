@@ -63,4 +63,6 @@ export const api = {
   ragAsk: (question) => post('/rag/ask', { question }),
   ragKnowledge: () => get('/rag/knowledge'),
   ragStatus: () => get('/rag/status'),
+  users: () => get('/users'),
+  user: (id) => get(`/users/${id}`),
 }

@@ -149,9 +149,45 @@ def investigate(req: InvestigateRequest):
     evt = req.event.model_dump()
     history = [h.model_dump() for h in req.history]
     try:
-        return det.investigate_event(evt, history=history)
+        res = det.investigate_event(evt, history=history)
     except Exception as exc:  # pragma: no cover
         raise HTTPException(500, f"investigation failed: {exc}") from exc
+    # persist the live-investigated user's details to the user database so the
+    # RAG pipeline and dashboard can look them up (survives restarts).
+    try:
+        from app.user_db import get_user_db
+        get_user_db().upsert_user(
+            str(evt.get("user_id") or ""), evt, outcome=res,
+        )
+    except Exception:  # pragma: no cover - DB must never break scoring
+        pass
+    return res
+
+
+# ---------------------------------------------------------------- user database
+@app.get("/api/users")
+def users_list(risk: Optional[str] = Query(None, pattern="^(approve|review|block)$")):
+    """Stored user/transaction details for every live-investigated payment."""
+    from app.user_db import get_user_db
+    rows = get_user_db().all()
+    if risk:
+        rows = [r for r in rows if r.get("decision") == risk]
+    return {"users": rows, "stats": get_user_db().stats()}
+
+
+@app.get("/api/users/stats")
+def users_stats():
+    from app.user_db import get_user_db
+    return get_user_db().stats()
+
+
+@app.get("/api/users/{user_id}")
+def users_get(user_id: str):
+    from app.user_db import get_user_db
+    rec = get_user_db().get(user_id)
+    if rec is None:
+        raise HTTPException(404, "user not found in user database")
+    return rec
 
 
 # ---------------------------------------------------------------- verification
@@ -227,8 +263,8 @@ class RagRequest(BaseModel):
 
 @app.get("/api/rag/status")
 def rag_status():
-    from app.rag import get_rag
-    return get_rag().status()
+    from app.rag_pipeline import pipeline_status
+    return pipeline_status()
 
 
 @app.get("/api/rag/knowledge")
@@ -239,39 +275,12 @@ def rag_knowledge():
 
 @app.post("/api/rag/ask")
 def rag_ask(req: RagRequest):
-    """Admin Q&A: 'what is the issue and what should I do about it?'. Retrieves
-    the best-matching known-issue runbook and grounds the answer with LIVE state
-    (test metrics, continual-learning status, pending verifications)."""
-    from app.rag import get_rag
-    det = get_detector()
-    # Feed the LIVE dataset into the RAG so it can answer questions about real
-    # transactions (events), learned outcomes (feedback) and phone verifications.
-    live = {"test": det.test_metrics()}
-    dec = det.decisions().sort_values("p_investigator", ascending=False)
-    stop = min(150, len(dec))
-    cols = ["event_id", "user_id", "merchant", "amount_inr", "payment_method",
-            "status", "p_ml", "p_behav", "p_graph", "p_investigator",
-            "decision", "true_label", "fraud_vector"]
-    live["events"] = dec[cols].head(stop).to_dict(orient="records")
-    try:
-        from app.feedback import get_controller
-        c = get_controller()
-        live["feedback"] = {**c.status(), "records": c.records()}
-    except Exception:  # pragma: no cover
-        live["feedback"] = {}
-    try:
-        from app.verification import verifier
-        live["verification"] = {"status": verifier().status(),
-                                "sessions": verifier().list()}
-    except Exception:  # pragma: no cover
-        live["verification"] = {}
-    res = get_rag().ask(req.question, live=live)
-    return {
-        "question": req.question,
-        "answer": res.answer,
-        "sources": res.sources,
-        "top": res.top,
-    }
+    """Admin Q&A routed through the RAG PIPELINE: the pipeline gathers every
+    live source (user database, events, feedback, phone verifications, metrics),
+    feeds them to the RAG engine, and returns a grounded answer for the admin
+    dashboard."""
+    from app.rag_pipeline import ask_admin
+    return ask_admin(req.question, det=get_detector())
 
 
 # ---------------------------------------------------------------- continual learning

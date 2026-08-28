@@ -241,6 +241,23 @@ class RAGEngine:
                          f"{s.get('amount_inr') or 0}"),
             })
 
+        # ---- user database chunks (persisted live-investigated users) ----
+        for u in (live.get("users") or [])[:120]:
+            uid = u.get("user_id", "")
+            if not uid:
+                continue
+            chunks.append({
+                "type": "user", "doc_id": f"user:{uid}",
+                "title": f"user {uid}",
+                "text": (f"user {uid} name {u.get('name') or 'unknown'} phone "
+                         f"{u.get('phone') or 'unknown'} merchant {u.get('merchant') or ''} "
+                         f"card last4 {u.get('card_last4') or ''} device "
+                         f"{u.get('device_id') or ''} payment method "
+                         f"{u.get('payment_method') or ''} amount rupees "
+                         f"{u.get('amount_inr') or 0} decision {u.get('decision') or 'unknown'} "
+                         f"scores {u.get('scores') or {}}"),
+            })
+
         return chunks
 
     @staticmethod
@@ -250,11 +267,13 @@ class RAGEngine:
         ver = live.get("verification") or {}
         sessions = ver.get("sessions") or []
         events = live.get("events") or []
+        users = live.get("users") or []
         return (
             len(events),
             len(records),
             len([r for r in records if r.get("label") is not None]),
             len(sessions),
+            len(users),
             (events[:1][0].get("event_id") if events else ""),
         )
 
@@ -324,7 +343,7 @@ class RAGEngine:
 
         # split hits into static (runbook) vs live (dataset) chunks
         runbook_hits = [t for t in top if t[2].get("entry_id")]
-        live_hits = [t for t in top if t[2].get("type") in ("event", "insight", "feedback", "call")]
+        live_hits = [t for t in top if t[2].get("type") in ("event", "insight", "feedback", "call", "user")]
 
         # static keyword fallback (dedupe with runbook hits)
         hit_rids = {t[0] for t in runbook_hits}
