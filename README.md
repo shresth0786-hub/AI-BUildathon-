@@ -119,13 +119,16 @@ method-mix entropy, failure rate) signals.
   and a **phone-verification panel** (run the "Borderline — phone verify"
   scenario → see OTP + call script → confirm / deny / resend).
 - **Admin Q&A (RAG):** an admin can ask *"what's the issue and what should I do
-  about it?"* (`backend/app/rag.py` + `rag_knowledge.py`). A local TF-IDF
-  retrieval index over a curated, code-grounded runbook (13 issues: false
-  positives, false negatives, card testing, ATO, review backlog, Twilio, retrain,
-  thresholds, …) matches the question and returns a structured
-  **Issue → Diagnosis → What to do** answer, enriched with **live state** (test
-  metrics, continual-learning counts, pending verifications). Runs **fully
-  offline** — no embedding server or API key required.
+  about it?"* (`backend/app/rag.py` + `rag_knowledge.py`). A local TF-IDF index
+  combines a curated, code-grounded **runbook** (13 issues: false positives, false
+  negatives, card testing, ATO, review backlog, Twilio, retrain, thresholds, …)
+  with the **live dataset** — real scored payments, freshly-investigated events,
+  mined insights (top fraud merchants, blocked merchants, vectors, decisions),
+  confirmed feedback labels and phone verifications — and returns a structured
+  **Issue → Diagnosis → What to do** answer plus **live state**. The index is
+  rebuilt automatically as new payments/feedback arrive, so the admin can query
+  *real* current events ("why is merchant X blocked?", "which merchant has the
+  most fraud?"). Runs **fully offline** — no embedding server or API key.
 
 ---
 

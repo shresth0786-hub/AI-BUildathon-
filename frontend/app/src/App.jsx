@@ -626,10 +626,11 @@ function AdminRagPanel() {
     <div className="card">
       <h3>Admin Q&amp;A — RAG assistant</h3>
       <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-        Ask what the issue is and what to do about it. Answers are grounded in this
-        system's runbook ({rag?.entries ?? 0} known issues, {rag?.chunks ?? 0} retrieval
-        chunks, {rag?.offline ? 'local TF-IDF · no API key needed' : ''}) and include
-        current live state.
+        Ask what the issue is and what to do about it. The assistant answers from the
+        runbook ({rag?.entries ?? 0} issues) <b>and learns from the live dataset</b>
+        ({rag?.live_chunks ?? 0} live chunks: real transactions, mined insights,
+        confirmed feedback) — refreshed automatically as new payments come in.
+        Fully offline ({rag?.offline ? 'local TF-IDF · no API key' : ''}).
       </p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
         {RAG_PRESETS.map((p) => (

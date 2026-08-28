@@ -244,15 +244,25 @@ def rag_ask(req: RagRequest):
     (test metrics, continual-learning status, pending verifications)."""
     from app.rag import get_rag
     det = get_detector()
+    # Feed the LIVE dataset into the RAG so it can answer questions about real
+    # transactions (events), learned outcomes (feedback) and phone verifications.
     live = {"test": det.test_metrics()}
+    dec = det.decisions().sort_values("p_investigator", ascending=False)
+    stop = min(150, len(dec))
+    cols = ["event_id", "user_id", "merchant", "amount_inr", "payment_method",
+            "status", "p_ml", "p_behav", "p_graph", "p_investigator",
+            "decision", "true_label", "fraud_vector"]
+    live["events"] = dec[cols].head(stop).to_dict(orient="records")
     try:
         from app.feedback import get_controller
-        live["feedback"] = get_controller().status()
+        c = get_controller()
+        live["feedback"] = {**c.status(), "records": c.records()}
     except Exception:  # pragma: no cover
         live["feedback"] = {}
     try:
         from app.verification import verifier
-        live["verification"] = {"status": verifier().status()}
+        live["verification"] = {"status": verifier().status(),
+                                "sessions": verifier().list()}
     except Exception:  # pragma: no cover
         live["verification"] = {}
     res = get_rag().ask(req.question, live=live)
