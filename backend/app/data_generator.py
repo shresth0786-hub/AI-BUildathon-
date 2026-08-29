@@ -38,7 +38,11 @@ CURRENCIES = ["INR"]
 FRAUD_VECTORS = [
     "CARD_TESTING", "VELOCITY_BURST", "BOT_AUTOMATION",
     "COLLUSION_RING", "STOLEN_CARD",
+    "UPI_P2P", "ACCOUNT_TAKEOVER", "REFUND_ABUSE", "MERCHANT_BIN",
 ]
+
+# Payment methods that naturally carry the newer (non-card) vectors.
+UPI_METHODS = ["upi", "wallet"]
 
 
 @dataclass
@@ -231,16 +235,37 @@ def _generate_fraud_actor(vector: str, count: int) -> list[dict]:
             device = ctx.device_ids[ring_member % len(ctx.device_ids)]
             amount = float(np.random.uniform(300, 2600))
             ts = ctx.time_window[0] + random.randint(0, 60 * 60 * 72)
+        elif vector == "UPI_P2P":
+            ts = ctx.time_window[0] + i * random.randint(20, 120)
+            amount = float(np.random.uniform(800, 15000))  # P2P transfer
+            device = f"dev_fra_{random.randint(11111, 99999)}"  # fresh per event
+        elif vector == "ACCOUNT_TAKEOVER":
+            ts = ctx.time_window[0] + i * random.randint(600, 3600)
+            amount = float(np.random.uniform(3000, 40000))  # drain the account
+            device = f"dev_fra_{random.randint(11111, 99999)}"  # attacker device, never seen before
+        elif vector == "REFUND_ABUSE":
+            ts = ctx.time_window[0] + i * random.randint(90, 540)
+            amount = float(np.random.uniform(15, 600))  # churny refund-friendly
+            device = ctx.device_ids[0]  # same attacker device for repeat claims
+        elif vector == "MERCHANT_BIN":
+            ts = ctx.time_window[0] + i * random.randint(10, 60)
+            amount = float(np.random.uniform(50, 1200))
+            device = ctx.device_ids[i % len(ctx.device_ids)]
         else:  # STOLEN_CARD
             amount = float(np.random.uniform(1200, 6800))
             device = f"dev_fra_{random.randint(11111, 99999)}"  # fresh device per event
             ts = ctx.time_window[0] + random.randint(0, 60 * 60 * 6)
 
         merchant = random.choice(ctx.merchants if ctx.merchants else MERCHANTS)
+        if vector == "MERCHANT_BIN":
+            # merchant/BIN fraud concentrates many hits on ONE merchant + BIN
+            merchant = ctx.merchants[0]
         card_tail = f"{random.randint(*ctx.card_tail_range):04d}"
         if vector == "CARD_TESTING":
             card_tail = f"{random.randint(1000, 9999):04d}"
             card_used = f"{random.randint(1000, 9999):04d}"  # same stolen bin family
+        elif vector == "MERCHANT_BIN":
+            card_tail = f"{random.randint(5200, 5299):04d}"  # one targeted BIN family
         rows.append(
             _fraud_row(ctx, vector, actor, card_tail, device, ts, amount,
                        merchant, i, ring_member)
@@ -251,8 +276,17 @@ def _generate_fraud_actor(vector: str, count: int) -> list[dict]:
 def _fraud_row(ctx: FraudCtx, vector, actor, card_tail, device, ts,
                amount, merchant, i, ring_member) -> dict:
     declined = random.random() < 0.45  # fraud often fails first, retries
-    method = "card" if vector in ("STOLEN_CARD", "CARD_TESTING") else \
-        random.choices(PAYMENT_METHODS, weights=[0.7, 0.15, 0.05, 0.05, 0.05])[0]
+    if vector == "UPI_P2P":
+        method = random.choice(UPI_METHODS)
+    elif vector == "ACCOUNT_TAKEOVER":
+        method = "upi" if random.random() < 0.7 else "netbanking"
+    elif vector == "REFUND_ABUSE":
+        method = random.choices(PAYMENT_METHODS, weights=[0.4, 0.3, 0.1, 0.1, 0.1])[0]
+    elif vector == "MERCHANT_BIN":
+        method = "card"
+    else:
+        method = "card" if vector in ("STOLEN_CARD", "CARD_TESTING") else \
+            random.choices(PAYMENT_METHODS, weights=[0.7, 0.15, 0.05, 0.05, 0.05])[0]
 
     is_international = vector == "STOLEN_CARD" and random.random() < 0.6
     ip_geo_match = not is_international and not (vector == "STOLEN_CARD" and random.random() < 0.4)
@@ -260,10 +294,17 @@ def _fraud_row(ctx: FraudCtx, vector, actor, card_tail, device, ts,
     shipping_zip = billing_zip
     if vector == "STOLEN_CARD":
         shipping_zip = f"{random.randint(100000, 999999):06d}"  # mismatch
-    is_new_device = vector == "STOLEN_CARD"
+    is_new_device = vector in ("STOLEN_CARD", "ACCOUNT_TAKEOVER")
 
     typing_seconds = float(np.random.uniform(0.5, 3.0)) if vector == "BOT_AUTOMATION" \
         else float(np.random.uniform(1.5, 9.0))
+
+    # new non-card fraud signatures (defaults for the older card vectors)
+    is_refund = vector == "REFUND_ABUSE"
+    refund_session = vector == "REFUND_ABUSE"
+    new_beneficiary = vector == "UPI_P2P"
+    account_reset = vector == "ACCOUNT_TAKEOVER"
+    payout_via = "upi"
 
     return {
         "event_id": "",
@@ -286,6 +327,11 @@ def _fraud_row(ctx: FraudCtx, vector, actor, card_tail, device, ts,
         "attempt_count": int(random.randint(1, 4)),
         "is_new_device": bool(is_new_device),
         "three_ds_passed": bool(random.random() < 0.5),
+        "is_refund": bool(is_refund),
+        "refund_session": bool(refund_session),
+        "new_beneficiary": bool(new_beneficiary),
+        "account_reset": bool(account_reset),
+        "payout_via": payout_via,
         "fraud_vector": vector,
         "true_label": 1,
     }

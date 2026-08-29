@@ -166,12 +166,14 @@ class Investigator:
 
     @staticmethod
     def _event_for_verification(row) -> dict:
-        # carry payer contact + payment fields used by the call/OTP flow
+        # carry payer contact + payment fields (incl. OTP delivery channel) used
+        # by the call / SMS / WhatsApp flow
         return {
             "phone": str(row.get("phone", "")),
             "amount_inr": float(row["amount_inr"]),
             "merchant": str(row["merchant"]),
             "card_last4": str(row["card_last4"]),
+            "channel": str(row.get("channel", "call")),
         }
 
     def _build_evidence(self, row, feat, p_ml, p_behav, p_graph, p) -> list[dict]:

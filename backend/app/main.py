@@ -72,6 +72,8 @@ class PaymentEvent(BaseModel):
     three_ds_passed: bool = True
     status: str = "captured"
     phone: str = ""
+    channel: str = Field("call", description="OTP delivery channel for the review "
+                         "band: call | sms | whatsapp (used with Twilio)")
 
 
 class InvestigateRequest(BaseModel):
@@ -357,31 +359,69 @@ def verify_event(req: VerifyEventRequest):
         raise HTTPException(500, f"verification setup failed: {exc}") from exc
 
 
-# ------------------------------------------------------------------ RAG / admin Q&A
+# ------------------------------------------------------------------ SENbot (admin/role Q&A)
+# SENbot is the (formerly "RAG Q&A") assistant. It is available to EVERY
+# designation. Authorization is role-scoped:
+#   * admin          -> full integrity: answers over the live dataset AND can
+#                       DELETE a payer + their data from the dataset (`integrity`).
+#   * employee / care-> read-only: SENbot can SEARCH the user database + events
+#                       and READ them, and they can register a support query,
+#                       but they have NO delete / integrity capability.
+
 class RagRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=1000)
 
 
 @app.get("/api/rag/status")
-def rag_status(user=Depends(require_role("admin"))):
+def rag_status(user: dict = Depends(get_current_user)):
     from app.rag import pipeline_status
-    return pipeline_status()
+    return {**pipeline_status(), "can_manage": user["role"] == "admin"}
 
 
 @app.get("/api/rag/knowledge")
-def rag_knowledge(user=Depends(require_role("admin"))):
+def rag_knowledge(user: dict = Depends(get_current_user)):
     from app.rag import get_rag
     return {"issues": get_rag().knowledge()}
 
 
+@app.get("/api/users/search")
+def users_search(q: str = Query("", max_length=256),
+                 user: dict = Depends(get_current_user)):
+    """SENbot read-only search across the user database (by phone, user id,
+    name, card). Available to every authenticated role — but read-only: no
+    delete / integrity here. Admin uses the same endpoint for lookups."""
+    from app.database import get_user_db
+    rows = get_user_db().search(q)
+    return {"users": rows}
+
+
 @app.post("/api/rag/ask")
-def rag_ask(req: RagRequest, user=Depends(require_role("admin"))):
-    """Admin Q&A routed through the RAG PIPELINE: the pipeline gathers every
-    live source (user database, events, feedback, phone verifications, metrics),
-    feeds them to the RAG engine, and returns a grounded answer for the admin
-    dashboard."""
+def rag_ask(req: RagRequest, user: dict = Depends(get_current_user)):
+    """SENbot Q&A for every designation. The pipeline replies read-only; the
+    caller's role is surfaced so the UI can show role-appropriate actions
+    (admin can delete users/data, others only read/search + register queries)."""
     from app.rag import ask_admin
-    return ask_admin(req.question, det=get_detector())
+    ans = ask_admin(req.question, det=get_detector())
+    return {**ans, "can_manage": user["role"] == "admin"}
+
+
+@app.delete("/api/users/{user_id}")
+def users_delete(user_id: str, user=Depends(require_role("admin"))):
+    """ADMIN-ONLY integrity action: permanently remove a payer and ALL of their
+    stored data from the dataset + user database. This is the capability
+    employee/customer-care roles do NOT have on the SENbot/dashboard."""
+    from app.database import get_user_db
+    removed = get_user_db().delete(user_id)
+    if removed is None:
+        raise HTTPException(404, "user not found in user database")
+    det = get_detector()
+    removed_events = det.delete_user_events(user_id)
+    return {
+        "ok": True,
+        "user_id": user_id,
+        "removed_from_user_db": removed,
+        "events_removed": removed_events,
+    }
 
 
 # ---------------------------------------------------------------- continual learning

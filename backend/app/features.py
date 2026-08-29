@@ -36,6 +36,19 @@ class FeatureEngineer:
 
         f = pd.DataFrame(index=df.index)
 
+        # ---- ensure newer (non-card) signature columns exist with safe defaults
+        for col, default in [
+            ("is_refund", False), ("refund_session", False),
+            ("new_beneficiary", False), ("account_reset", False),
+            ("payout_via", "card"),
+        ]:
+            if col not in df.columns:
+                df[col] = default
+            if df[col].dtype == object:
+                df[col] = df[col].where(df[col].notna(), default).astype(object)
+            else:
+                df[col] = df[col].fillna(default)
+
         # ---- context / timing
         f["hour"] = df["ts_dt"].dt.hour
         f["is_weekend"] = (df["ts_dt"].dt.weekday >= 5).astype(int)
@@ -105,6 +118,30 @@ class FeatureEngineer:
         ).astype(int)
         f["card_test_flag"] = (
             (f["amount"] <= 15) & (f["count_card_60m"] >= 3)
+        ).astype(int)
+
+        # ---- derived flags for the newer (non-card) fraud signatures
+        f["upi_flag"] = (df["payment_method"] == "upi").astype(int)
+        f["p2p_new_beneficiary"] = ((df["payment_method"].isin(["upi", "wallet"]))
+                                    & (df["new_beneficiary"] == 1)).astype(int)
+        f["refund_flag"] = df["is_refund"].astype(int)
+        f["refund_session_flag"] = df["refund_session"].astype(int)
+        f["account_reset_flag"] = df["account_reset"].astype(int)
+        f["ato_flag"] = (
+            (df["account_reset"] == 1)
+            & (f["is_new_device"] == 1)
+            & (f["amount_suspicious"] == 0)
+            & (f["amount"] >= 5000)
+        ).astype(int)
+        # merchant/BIN concentration: how much of this payer's recent activity
+        # is pinned on a single merchant -> signals merchant/BIN bust-out
+        f["merchant_concentration"] = (
+            f[f"count_merchant_{self.window // 60}m"]
+            / f[f"count_user_{self.window // 60}m"].clip(lower=1)
+        ).round(3)
+        f["merchant_flag"] = (
+            (f[f"count_merchant_{self.window // 60}m"] >= 4)
+            & (f["merchant_concentration"] >= 0.9)
         ).astype(int)
 
         # ---- behaviour entropy: how varied is the user's method mix

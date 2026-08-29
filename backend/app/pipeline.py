@@ -417,6 +417,25 @@ class FraudDetector:
             return "review"
         return "approve"
 
+    # ---------------------------------------------------------------- integrity
+    def delete_user_events(self, user_id: str) -> int:
+        """ADMIN integrity action (data-hygiene): permanently remove every
+        recorded event belonging to `user_id` from the event + feature datasets,
+        then re-persist the trimmed artifacts. Returns the number of events
+        removed. This is the capability employee/customer-care roles do NOT have."""
+        if self.event_df is None:
+            return 0
+        mask = self.event_df["user_id"].astype(str) != str(user_id)
+        n_before = len(self.event_df)
+        kept = self.event_df.index[mask]
+        self.event_df = self.event_df.loc[kept].reset_index(drop=True)
+        if self.feat_df is not None:
+            self.feat_df = self.feat_df.loc[kept]
+        removed = n_before - len(self.event_df)
+        if removed:
+            self.save_all()
+        return removed
+
     # ---------------------------------------------------------------- metrics
     def decision_metrics(self) -> dict:
         _require(self)

@@ -51,6 +51,13 @@ _OTP_TTL_SECONDS = 300       # OTP expires after 5 minutes
 _OTP_POOL = "0123456789"
 _RECORD_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "verifications.json")
 
+# Verification channels the payer can be reached on to confirm the OTP.
+CHANNELS = ("call", "sms", "whatsapp")
+# Twilio WhatsApp sender (free sandbox standard sender). Override with
+# TWILIO_WHATSAPP_NUMBER if you have a production WhatsApp number approved.
+_WHATSAPP_SANDBOX_FROM = "whatsapp:+14155238886"
+_WHATSAPP_SMS_FROM = "whatsapp:"  # prefix we prepend to the payer number
+
 
 def _generate_otp(length: int = 6) -> str:
     """Cryptographically-random numeric OTP (no external dependency)."""
@@ -110,17 +117,23 @@ class PhoneVerifier:
         return {
             "mode": self.mode(),
             "twilio_installed": _TWILIO_AVAILABLE,
+            "channels": list(CHANNELS),
             "active": sum(1 for v in self._store.values()
                           if v["status"] in ("pending", "in_call")),
         }
 
     # ------------------------------------------------------------------ create
     def create(self, event: dict) -> dict:
-        """Open a verification session for a payment in the review band."""
+        """Open a verification session for a payment in the review band. The
+        payer is reached on the requested `channel` (call | sms | whatsapp) to
+        confirm the OTP they were sent."""
         vid = "ver_" + uuid.uuid4().hex[:12]
         otp = _generate_otp()
         now = time.time()
         phone = event.get("phone") or event.get("payer_phone") or "**********"
+        channel = event.get("channel", "call")
+        if channel not in CHANNELS:
+            channel = "call"
         ver = {
             "verification_id": vid,
             "event_id": event.get("event_id", "unknown"),
@@ -129,56 +142,88 @@ class PhoneVerifier:
             "amount_inr": event.get("amount_inr", 0),
             "phone": phone,
             "card_last4": event.get("card_last4", ""),
+            "channel": channel,
             "otp": otp,
             "otp_expires_at": now + self.otp_ttl,
             "attempts": 0,
             "max_attempts": self.max_attempts,
-            "status": "in_call",                 # call is being placed
+            "status": "in_call",                 # delivery is being attempted
             "created_at": now,
-            "call_script": self._build_call_script(event, otp),
+            "call_script": self._build_call_script(event, otp, channel),
         }
         self._store[vid] = ver
-        self._place_call(ver)
+        self._deliver(ver)
         ver["status"] = "pending"                # awaiting OTP confirmation
         self._save()
         return self._public(ver)
 
-    def _place_call(self, ver: dict) -> None:
-        """Simulate the outgoing call. With twilio + keys it would originate a
-        real call/SMS here; without them we just log it for the demo."""
+    def _deliver(self, ver: dict) -> None:
+        """Deliver the OTP to the payer over the requested channel. With Twilio
+        + keys we originate a real voice call, SMS, or WhatsApp message; without
+        them we just log it so the simulated demo shows the OTP in the UI."""
+        channel = ver.get("channel", "call")
         if self.mode() == "real":
             try:
-                # telephony client is only non-None in real mode
                 client = _TwilioClient(os.getenv("TWILIO_ACCOUNT_SID"),
                                        os.getenv("TWILIO_AUTH_TOKEN"))
-                call = client.calls.create(
-                    to=ver["phone"], from_=os.getenv("TWILIO_PHONE_NUMBER"),
-                    record=True,      # record the call audio (PII: core Twilio media)
-                    twiml=f"<Response><Say>Your payment of "
-                          f"{ver['amount_inr']} rupees at {ver['merchant']} "
-                          f"requires verification. Your code is "
-                          f"{ver['otp']}.</Say></Response>",
-                )
-                ver["call_delivered"] = "real"
-                ver["call_sid"] = getattr(call, "sid", None)
-                # best-effort recording URL (fetchable later via Twilio API)
-                ver["recording_available"] = True
+                from_ = os.getenv("TWILIO_PHONE_NUMBER")
+                if channel == "call":
+                    call = client.calls.create(
+                        to=ver["phone"], from_=from_,
+                        record=True,   # record the call audio (PII: core Twilio media)
+                        twiml=f"<Response><Say>Your payment of "
+                              f"{ver['amount_inr']} rupees at {ver['merchant']} "
+                              f"requires verification. Your code is "
+                              f"{ver['otp']}.</Say></Response>",
+                    )
+                    ver["delivery_sid"] = getattr(call, "sid", None)
+                    ver["recording_available"] = True
+                    ver["message"] = None
+                elif channel == "whatsapp":
+                    wa_from = os.getenv("TWILIO_WHATSAPP_NUMBER") or _WHATSAPP_SANDBOX_FROM
+                    msg = client.messages.create(
+                        body=self._otp_message(ver),
+                        from_=_WHATSAPP_SMS_FROM + wa_from,
+                        to=_WHATSAPP_SMS_FROM + ver["phone"],
+                    )
+                    ver["delivery_sid"] = getattr(msg, "sid", None)
+                    ver["recording_available"] = False
+                    ver["message"] = "whatsapp"
+                else:  # sms
+                    msg = client.messages.create(
+                        body=self._otp_message(ver),
+                        from_=from_, to=ver["phone"],
+                    )
+                    ver["delivery_sid"] = getattr(msg, "sid", None)
+                    ver["recording_available"] = False
+                    ver["message"] = "sms"
+                ver["delivered"] = "real"
             except Exception as exc:  # noqa: BLE001
-                ver["call_delivered"] = f"real-failed({exc})"
-                ver["call_delivered"] = "simulated-fallback"
+                ver["delivered"] = f"real-failed({exc})"
+                ver["delivered"] = "simulated-fallback"
                 ver["recording_available"] = False
         else:
-            ver["call_delivered"] = "simulated"
+            ver["delivered"] = "simulated"
             ver["recording_available"] = False
 
     @staticmethod
-    def _build_call_script(event: dict, otp: str) -> list[str]:
-        """Human-readable script an agent reads when calling the payer, and the
-        confirmation questions we expect them to answer correctly."""
+    def _otp_message(ver: dict) -> str:
+        """The SMS / WhatsApp text that carries the OTP (never reveal internal
+        verification ids)."""
+        return (f"Razorpay fraud team: your payment of INR {ver['amount_inr']} at "
+                f"{ver['merchant']} (card ••{ver['card_last4']}) needs confirmation. "
+                f"Your one-time code is {ver['otp']}. Do not share it with anyone.")
+
+    @staticmethod
+    def _build_call_script(event: dict, otp: str, channel: str) -> list[str]:
+        """Channel-specific script an analyst reads / SMS content, and the
+        confirmation questions we expect the owner to answer correctly."""
+        phone = event.get("phone", "the payer")
+        head = f"Call {phone}" if channel == "call" else f"{channel.title()} {phone}"
         return [
-            f"Call {event.get('phone', 'the payer')} — identify the Razorpay "
-            f"fraud team, do NOT ask the payer to read a code back in a "
-            f"phishable way; instead send {otp} and ask them to confirm it.",
+            f"{head} — identify the Razorpay fraud team. Share the one-time code "
+            f"{otp} and ask them to confirm it (do NOT ask them to read a code "
+            f"back over voice in a phishable way).",
             f"Confirm the payment: {event.get('amount_inr', '?')} INR at "
             f"{event.get('merchant', '?')} on card ••{event.get('card_last4', '????')}.",
             "Was this payment made by you?",
@@ -232,16 +277,18 @@ class PhoneVerifier:
         return self._public(ver)
 
     def resend(self, verification_id: str) -> dict:
-        """Regenerate a fresh OTP and re-place the call."""
+        """Regenerate a fresh OTP and re-deliver it over the same channel."""
         ver = self._store.get(verification_id)
         if ver is None:
             raise KeyError(f"Unknown verification: {verification_id}")
         ver["otp"] = _generate_otp()
         ver["otp_expires_at"] = time.time() + self.otp_ttl
-        ver["call_script"][0] = (f"Call {ver['phone']} — Razorpay fraud team; "
-                                 f"send {ver['otp']} and ask them to confirm it.")
+        ver["call_script"] = self._build_call_script(
+            {**ver, "amount_inr": ver["amount_inr"], "merchant": ver["merchant"],
+             "phone": ver["phone"], "card_last4": ver["card_last4"]},
+            ver["otp"], ver.get("channel", "call"))
         ver["status"] = "pending"
-        self._place_call(ver)
+        self._deliver(ver)
         self._save()
         return self._public(ver)
 

@@ -126,6 +126,32 @@ class UserDatabase:
         with self._lock:
             return self._data.get(user_id)
 
+    def search(self, query: str) -> list[dict]:
+        """Read-only search over users by phone, user id, name, card, merchant or
+        device. Matching is case-insensitive substring. Non-admin roles use this
+        through SENbot — it never deletes or mutates anything."""
+        q = (query or "").strip().lower()
+        if not q:
+            return self.all()
+        out = []
+        with self._lock:
+            for rec in self._data.values():
+                hay = " ".join(str(rec.get(k) or "") for k in (
+                    "user_id", "name", "phone", "card_last4", "merchant",
+                    "device_id", "decision", "fraud_vector")).lower()
+                if q in hay:
+                    out.append(rec)
+        return out
+
+    def delete(self, user_id: str) -> dict | None:
+        """ADMIN integrity action: remove a payer permanently from the store.
+        Returns the removed record (or None if it did not exist)."""
+        with self._lock:
+            rec = self._data.pop(user_id, None)
+            if rec is not None:
+                self._save()
+            return rec
+
     def count(self) -> int:
         with self._lock:
             return len(self._data)
