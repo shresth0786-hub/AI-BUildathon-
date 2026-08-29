@@ -4,7 +4,7 @@ USER DATABASE — persisted user / transaction details
 Stores the **name and other details** of every user whose payment is run
 through the live investigation flow (e.g. the "Live fraud check" / a payment
 that lands in the review band). Records survive a backend restart because they
-are persisted to `backend/data/users.json` (gitignored).
+are persisted to `backend/database/db/users.json` (gitignored, never on GitHub).
 
 Each record is keyed by `user_id` and keeps the latest values of that user's
 most recent investigated payment:
@@ -31,7 +31,7 @@ import os
 import threading
 import time
 
-_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "database", "db")
 _USERS_FILE = os.path.join(_DATA_DIR, "users.json")
 
 

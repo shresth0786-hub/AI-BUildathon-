@@ -1,25 +1,58 @@
 const BASE = '/api'
+const TOKEN_KEY = 'sentinel_token'
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || ''
+}
+export function setToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token)
+  else localStorage.removeItem(TOKEN_KEY)
+}
+
+function authHeaders(extra = {}) {
+  const t = getToken()
+  return { ...(t ? { Authorization: `Bearer ${t}` } : {}), ...extra }
+}
 
 async function get(path) {
-  const res = await fetch(BASE + path)
-  if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`)
+  const res = await fetch(BASE + path, { headers: authHeaders() })
+  if (!res.ok) throw new Error(await errorText(res, `GET ${path} -> ${res.status}`))
   return res.json()
 }
 
 async function post(path, body) {
   const res = await fetch(BASE + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => null)
-    throw new Error(err?.detail || `POST ${path} -> ${res.status}`)
-  }
+  if (!res.ok) throw new Error(await errorText(res, `POST ${path} -> ${res.status}`))
   return res.json()
 }
 
+async function patch(path, body) {
+  const res = await fetch(BASE + path, {
+    method: 'PATCH',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorText(res, `PATCH ${path} -> ${res.status}`))
+  return res.json()
+}
+
+async function errorText(res, fallback) {
+  try {
+    const j = await res.json()
+    return j?.detail || fallback
+  } catch {
+    return fallback
+  }
+}
+
 export const api = {
+  authRoles: () => get('/auth/roles'),
+  login: (username, password) => post('/auth/login', { username, password }),
+  me: () => get('/auth/me'),
   summary: () => get('/summary'),
   testMetrics: () => get('/test-metrics'),
   events: (risk, limit = 250) =>
@@ -30,7 +63,6 @@ export const api = {
   demoFraud: () => get('/demo/fraud'),
   demoClean: () => get('/demo/clean'),
   demoBorderline: (phone) => ({
-    // a medium-risk payment that triggers the phone-call payment confirmation
     event: {
       user_id: 'usr_rev_demo',
       device_id: 'dev_new_demo',
@@ -65,4 +97,7 @@ export const api = {
   ragStatus: () => get('/rag/status'),
   users: () => get('/users'),
   user: (id) => get(`/users/${id}`),
+  queryCreate: (body) => post('/queries', body),
+  queries: () => get('/queries'),
+  queryUpdate: (id, body) => patch(`/queries/${id}`, body),
 }

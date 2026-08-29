@@ -17,18 +17,20 @@ GET  /api/vectors            -> fraud-vector distribution
 
 from __future__ import annotations
 
+import hmac
 import os
 import time
 import uuid
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.pipeline import FraudDetector
 from app import razorpay_client
 from app.verification import verifier
+from app.auth import create_token, get_current_user, require_role, list_roles
 
 _ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "..", "artifacts")
 
@@ -85,6 +87,103 @@ class InvestigateRequest(BaseModel):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "razorpay-fraud-guardian"}
+
+
+# ------------------------------------------------ auth / roles
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+@app.get("/api/auth/roles")
+def auth_roles():
+    """Public: which demo accounts + role labels exist (drives the login page)."""
+    return list_roles()
+
+
+@app.post("/api/auth/login")
+def auth_login(req: LoginRequest):
+    """Verify credentials -> return token + role + display name."""
+    from app.auth import USERS, ROLE_LABELS
+    user = USERS.get(req.username)
+    if not user or not hmac.compare_digest(str(user["password"]), req.password):
+        raise HTTPException(401, "invalid username or password")
+    token = create_token(req.username)
+    return {
+        "token": token,
+        "username": req.username,
+        "role": user["role"],
+        "role_label": ROLE_LABELS[user["role"]],
+        "name": user["name"],
+    }
+
+
+@app.get("/api/auth/me")
+def auth_me(user: dict = Depends(get_current_user)):
+    """Validate the bearer token and return the current session."""
+    from app.auth import ROLE_LABELS
+    return {**user, "role_label": ROLE_LABELS[user["role"]]}
+
+
+# ---------------------------------------------------------------- customer-care queries
+# Queries raised to customer care live in a SEPARATE query database
+# (backend/database/db/queries.json) — isolated from the user database and the
+# payment datasets. Any authenticated role can raise a ticket; only admin and
+# customer-care can view/manage the queue.
+class QueryCreate(BaseModel):
+    author: str = Field("", max_length=128)
+    contact: str = Field("", max_length=256)
+    category: str = Field("other", max_length=32)
+    message: str = Field(..., min_length=1, max_length=4000)
+
+
+class QueryUpdate(BaseModel):
+    status: Optional[str] = Field(None, max_length=16)
+    assigned_to: Optional[str] = Field(None, max_length=128)
+    resolution: Optional[str] = Field(None, max_length=4000)
+
+
+@app.post("/api/queries")
+def queries_create(req: QueryCreate, user: dict = Depends(get_current_user)):
+    """Raise a new support ticket to customer care. Persisted to the QUERY
+    database (separate from user/payment data)."""
+    from app.query_db import get_query_db
+    q = get_query_db().create_query(
+        author=req.author or user.get("name") or user.get("username"),
+        message=req.message, category=req.category, contact=req.contact,
+    )
+    return q
+
+
+@app.get("/api/queries")
+def queries_list(user: dict = Depends(require_role("admin", "customer_care"))):
+    """Full query queue (admin + customer-care only)."""
+    from app.query_db import get_query_db
+    qdb = get_query_db()
+    return {"queries": qdb.all(), "stats": qdb.stats()}
+
+
+@app.get("/api/queries/stats")
+def queries_stats(user: dict = Depends(require_role("admin", "customer_care"))):
+    from app.query_db import get_query_db
+    return get_query_db().stats()
+
+
+@app.patch("/api/queries/{query_id}")
+def queries_update(query_id: str, req: QueryUpdate,
+                   user: dict = Depends(require_role("admin", "customer_care"))):
+    from app.query_db import get_query_db
+    try:
+        q = get_query_db().update_query(
+            query_id,
+            status=req.status, assigned_to=req.assigned_to,
+            resolution=req.resolution,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if q is None:
+        raise HTTPException(404, "query not found")
+    return q
 
 
 @app.get("/api/summary")
@@ -166,8 +265,10 @@ def investigate(req: InvestigateRequest):
 
 # ---------------------------------------------------------------- user database
 @app.get("/api/users")
-def users_list(risk: Optional[str] = Query(None, pattern="^(approve|review|block)$")):
-    """Stored user/transaction details for every live-investigated payment."""
+def users_list(user=Depends(require_role("admin")),
+               risk: Optional[str] = Query(None, pattern="^(approve|review|block)$")):
+    """Stored user/transaction details for every live-investigated payment.
+    ADMIN ONLY."""
     from app.user_db import get_user_db
     rows = get_user_db().all()
     if risk:
@@ -176,13 +277,13 @@ def users_list(risk: Optional[str] = Query(None, pattern="^(approve|review|block
 
 
 @app.get("/api/users/stats")
-def users_stats():
+def users_stats(user=Depends(require_role("admin"))):
     from app.user_db import get_user_db
     return get_user_db().stats()
 
 
 @app.get("/api/users/{user_id}")
-def users_get(user_id: str):
+def users_get(user_id: str, user=Depends(require_role("admin"))):
     from app.user_db import get_user_db
     rec = get_user_db().get(user_id)
     if rec is None:
@@ -262,19 +363,19 @@ class RagRequest(BaseModel):
 
 
 @app.get("/api/rag/status")
-def rag_status():
+def rag_status(user=Depends(require_role("admin"))):
     from app.rag_pipeline import pipeline_status
     return pipeline_status()
 
 
 @app.get("/api/rag/knowledge")
-def rag_knowledge():
+def rag_knowledge(user=Depends(require_role("admin"))):
     from app.rag import get_rag
     return {"issues": get_rag().knowledge()}
 
 
 @app.post("/api/rag/ask")
-def rag_ask(req: RagRequest):
+def rag_ask(req: RagRequest, user=Depends(require_role("admin"))):
     """Admin Q&A routed through the RAG PIPELINE: the pipeline gathers every
     live source (user database, events, feedback, phone verifications, metrics),
     feeds them to the RAG engine, and returns a grounded answer for the admin

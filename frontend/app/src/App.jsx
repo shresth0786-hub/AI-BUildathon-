@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer,
   XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from 'recharts'
-import { api } from './api.js'
+import { api, getToken, setToken } from './api.js'
 import AdminRagPanel from './components/AdminRagPanel.jsx'
+import Login from './components/Login.jsx'
+import UserDatabasePanel from './components/UserDatabasePanel.jsx'
+import CustomerCarePanel from './components/CustomerCarePanel.jsx'
 
 // ------------------------------------------------------------------ colors
 const C = { green: '#00b894', amber: '#fdcb6e', red: '#ff7675', accent: '#6c5ce7', blue: '#74b9ff' }
@@ -256,11 +259,6 @@ function PhoneVerifyBox({ pv, busy, onAction }) {
               </a>
             </div>
           )}
-          {!pv.recording_available && pv.call_delivered !== 'simulated' && (
-            <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-              Recording unavailable (upgrade Twilio to billing to enable call audio).
-            </div>
-          )}
         </div>
       )}
       {pv.status === 'approved' && <div className="green" style={{ marginTop: 8 }}>Payer confirmed ownership — payment approved.</div>}
@@ -298,7 +296,7 @@ function PhoneVerificationPanel({ sessions, mode, onChange }) {
       {sessions.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No verification sessions yet.</div>}
       {sessions.map((pv) => (
         <PhoneVerifyBox key={pv.verification_id} pv={pv}
-          busy={busyId === pv.verification_id} onAction={(a) => act(pv.verification_id, a)} />
+          busy={busyId === pv.verification_id} onAction={(a) => act(pv.verification_id, a, pv.otp)} />
       ))}
     </div>
   )
@@ -385,9 +383,6 @@ function LiveTest({ onInvestigate }) {
       </div>
       {err && <p style={{ color: C.red, fontSize: 13 }}>{err}</p>}
       {out && (
-        <div className="spacer" style={{ height: 14 }} />
-        )}
-      {out && (
         <div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <Badge decision={out.decision} />
@@ -425,23 +420,14 @@ function LiveTest({ onInvestigate }) {
   )
 }
 
-// ------------------------------------------------------------------ recent transactions + user detail
+// ------------------------------------------------------------------ recent transactions
 function RecentTransactions() {
   const [rows, setRows] = useState([])
-  const [users, setUsers] = useState({})
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(() => {
     setLoading(true)
-    Promise.all([api.events('', 100).catch(() => []), api.users().catch(() => ({ users: [] }))])
-      .then(([evs, ud]) => {
-        const byId = {}
-        ;(ud.users || []).forEach((u) => { byId[u.user_id] = u })
-        setUsers(byId)
-        setRows(evs)
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    api.events('', 100).then(setRows).catch(() => setRows([])).finally(() => setLoading(false))
   }, [])
   useEffect(() => {
     load()
@@ -452,43 +438,34 @@ function RecentTransactions() {
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h3 style={{ margin: 0 }}>Recent transactions &amp; user details</h3>
+        <h3 style={{ margin: 0 }}>Recent transactions</h3>
         <button className="btn ghost" onClick={load}>Refresh</button>
       </div>
       <div className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-        Latest scored payments (admin view) — user name &amp; contact shown when a live investigation stored them.
+        Latest scored payments in the stream.
       </div>
       <div className="spacer" style={{ height: 10 }} />
       <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
-            <tr><th>Event</th><th>User</th><th>Contact</th><th>Merchant</th><th>Amount</th><th>Risk</th><th>Decision</th><th>Vector</th></tr>
+            <tr><th>Event</th><th>User</th><th>Merchant</th><th>Amount</th><th>Risk</th><th>Decision</th><th>Vector</th></tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={8} className="muted">Loading…</td></tr>}
-            {!loading && rows.length === 0 && <tr><td colSpan={8} className="muted">No transactions yet.</td></tr>}
-            {rows.map((r) => {
-              const u = users[r.user_id]
-              return (
-                <tr key={r.event_id}>
-                  <td className="mono">{r.event_id.slice(0, 18)}</td>
-                  <td>
-                    <div>{u?.name || r.user_id}</div>
-                    <div className="muted" style={{ fontSize: 12 }}>{r.user_id} {u && r.user_id !== u.name ? '' : ''}</div>
-                  </td>
-                  <td className="muted" style={{ fontSize: 13 }}>
-                    {u ? `${u.phone || '—'} · ••${u.card_last4 || '—'}` : '—'}
-                  </td>
-                  <td>{r.merchant}</td>
-                  <td>₹{r.amount_inr.toLocaleString('en-IN')}</td>
-                  <td style={{ color: r.p_investigator > 0.6 ? C.red : r.p_investigator > 0.35 ? C.amber : C.green }}>
-                    {(r.p_investigator * 100).toFixed(1)}%
-                  </td>
-                  <td><Badge decision={r.decision} /></td>
-                  <td className="muted">{r.fraud_vector ? r.fraud_vector.replace(/_/g, ' ') : '—'}</td>
-                </tr>
-              )
-            })}
+            {loading && <tr><td colSpan={7} className="muted">Loading…</td></tr>}
+            {!loading && rows.length === 0 && <tr><td colSpan={7} className="muted">No transactions yet.</td></tr>}
+            {rows.map((r) => (
+              <tr key={r.event_id}>
+                <td className="mono">{r.event_id.slice(0, 18)}</td>
+                <td>{r.user_id}</td>
+                <td>{r.merchant}</td>
+                <td>₹{r.amount_inr.toLocaleString('en-IN')}</td>
+                <td style={{ color: r.p_investigator > 0.6 ? C.red : r.p_investigator > 0.35 ? C.amber : C.green }}>
+                  {(r.p_investigator * 100).toFixed(1)}%
+                </td>
+                <td><Badge decision={r.decision} /></td>
+                <td className="muted">{r.fraud_vector ? r.fraud_vector.replace(/_/g, ' ') : '—'}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -615,6 +592,7 @@ function LearningPanel({ onChanged }) {
 
 // ------------------------------------------------------------------ app
 export default function App() {
+  const [session, setSession] = useState(null)
   const [summary, setSummary] = useState(null)
   const [vectors, setVectors] = useState(null)
   const [rzp, setRzp] = useState(null)
@@ -622,6 +600,19 @@ export default function App() {
   const [selected, setSelected] = useState(null)
   const [verSessions, setVerSessions] = useState([])
   const [verMode, setVerMode] = useState('simulated')
+  const [ragOpen, setRagOpen] = useState(false)
+
+  const isAdmin = session?.role === 'admin'
+  const isCare = session?.role === 'customer_care'
+
+  const logout = () => {
+    setToken(null); setSession(null)
+  }
+
+  useEffect(() => {
+    if (!getToken()) { setSession(null); return }
+    api.me().then(setSession).catch(() => { setToken(null); setSession(null) })
+  }, [])
 
   const refreshVer = useCallback(() => {
     api.verification().then((d) => {
@@ -638,7 +629,12 @@ export default function App() {
   }, [refreshVer])
   useEffect(load, [load])
 
+  if (!session) {
+    return <Login onSuccess={(s) => { setToken(s.token); setSession(s) }} />
+  }
+
   const metrics = summary?.decision_metrics
+  const roleLabel = session.role_label || session.role
 
   return (
     <div className="wrap">
@@ -648,13 +644,21 @@ export default function App() {
           <h1>Sentinel AI</h1>
           <p>Razorpay Fraud Guardian · ML Risk · Behaviour AI · Graph Engine → AI Investigator</p>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span className="pill">{session.name} · {roleLabel}</span>
+          {isAdmin && (
+            <button className="btn" onClick={() => setRagOpen(true)} style={{ padding: '8px 12px' }}>
+              RAG Q&amp;A
+            </button>
+          )}
           {rzp && <span className={`pill ${rzp.configured ? 'online' : ''}`}>
             {rzp.configured ? 'Razorpay test-mode: ' + (rzp.live ? 'LIVE ⚠' : 'configured') : 'Keyless demo'}
           </span>}
-          <span className="pill online">API online</span>
+          <button className="btn ghost" onClick={logout}>Log out</button>
         </div>
       </header>
+
+      {isAdmin && <UserDatabasePanel />}
 
       <RecentTransactions />
 
@@ -686,16 +690,26 @@ export default function App() {
       <h2 className="section">Phone-call payment confirmation (review band)</h2>
       <PhoneVerificationPanel sessions={verSessions} mode={verMode} onChange={refreshVer} />
 
-      <h2 className="section">Continual learning</h2>
-      <LearningPanel />
+      {!isCare && (
+        <>
+          <h2 className="section">Continual learning</h2>
+          <LearningPanel />
+        </>
+      )}
 
-      <h2 className="section">Admin Q&amp;A — RAG</h2>
-      <AdminRagPanel />
+      {(isAdmin || isCare) && (
+        <>
+          <h2 className="section">Customer-care queries</h2>
+          <CustomerCarePanel />
+        </>
+      )}
 
       <h2 className="section">Payment stream</h2>
       <EventsTable onSelect={setSelected} />
 
       {selected && <EventDetail id={selected} onClose={() => setSelected(null)} />}
+
+      {isAdmin && <AdminRagPanel open={ragOpen} onClose={() => setRagOpen(false)} />}
 
       <div className="spacer" />
       <footer className="muted" style={{ fontSize: 12, textAlign: 'center' }}>

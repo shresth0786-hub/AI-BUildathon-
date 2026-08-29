@@ -7,6 +7,8 @@ venv/
 backend/artifacts/*
 !backend/artifacts/.gitkeep
 backend/data/*
+backend/database/*
+!backend/database/.gitkeep
 
 # Frontend
 frontend/app/node_modules/
