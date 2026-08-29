@@ -20,6 +20,76 @@ block**, and generates a **human-readable investigation report with evidence**.
 
 ---
 
+## How Sentinel AI works — model flow
+
+```
+                        ┌──────────────────────────────────────────────┐
+   incoming payment     ▼                                              │
+┌─────────────────┐   ┌──────────────────┐   ┌────────────────────────┐ │
+│  RAZORPAY EVENT │──▶│  FEATURE ENGINE  │──▶│  THREE MODELS IN PARALLEL│ │
+│ (webhook/demo)  │   │  (leak-safe       │   │   • ML Risk  (gradient) │ │
+└─────────────────┘   │   velocity, geo,  │   │   • Behaviour AI (AE)  │ │
+                      │   device, typing) │   │   • Graph Engine (PPR) │ │
+                      └──────────────────┘   └───────────┬────────────┘ │
+                                                          │             │
+                                                          ▼             │
+                                          ┌────────────────────────────┐│
+                                          │      AI INVESTIGATOR       ││
+                                          │ ensemble → one fraud prob. ││
+                                          └──────┬─────────────┬───────┘│
+                                                 │             │        │
+                        p_low                   │mid (review)  │p_high  │
+                         │                       │             │        │
+             ┌───────────▼──────────┐   ┌────────▼────────┐  ┌─────────▼───┐
+             │      APPROVE         │   │ PHONE VERIFY    │  │    BLOCK    │
+             │ (settle payment)     │   │ call customer   │  │ (decline +  │
+             └───────────┬──────────┘   │ OTP / call-back │  │  evidence)  │
+                         │              └──────┬───┬──────┘  └──────┬──────┘
+                         │              OK?    │   │ deny?         │
+                         │          (confirm)  ▼   ▼ (deny)        │
+                         │              ┌────────┐ ┌────────┐      │
+                         │              │APPROVE │ │ BLOCK  │      │
+                         │              └───┬────┘ └───┬────┘      │
+                         │                  │          │           │
+                         ▼                  ▼          ▼           ▼
+              ┌──────────────────────────────────────────────────────────┐
+              │   OUTCOME + EVIDENCE  →  investigation report, decisions │
+              └──────────────┬───────────────────────────────────────────┘
+                             │
+                 ┌───────────▼──────────────────────────────┐
+                 │   CONTINUAL LEARNING LOOP                 │
+                 │   verdicts / manual corrections ─────────┼──▶  online
+                 │   (approve, block, phone-confirm)        │   corrector
+                 └───────────┬──────────────────────────────┘   + retrain
+                             │
+                 ┌───────────▼──────────────────────────────┐
+                 │   ADMIN FEEDBACK                            │
+                 │   RAG Q&A learns from live events +         │
+                 │   the persisted user database               │
+                 └──────────────────────────────────────────────┘
+```
+
+**Pipeline stages, briefly**
+1. **Event → Features** — raw payment becomes a leak-safe numeric vector
+   (velocity, geographic, device, timing, behavioural signals).
+2. **Parallel scoring** — **ML Risk** (supervised), **Behaviour AI** (anomaly
+   autoencoder), **Graph Engine** (network/page-rank) score independently.
+3. **Investigate** — the **AI Investigator** ensemble yields one calibrated
+   fraud probability and picks a decision band.
+4. **Decide** — `approve` (settle), `review` (phone-confirm the payer before
+   settling), or `block` (decline with evidence).
+5. **Phone verify (review band)** — the customer is called and must confirm
+   the OTP: correct → approve; denied → block.
+6. **Explain + store** — outcomes and evidence feed the investigation report
+   and the persisted user database.
+7. **Learn** — phone-verdicts and manual corrections update the models
+   immediately (online corrector) and on retrain; the RAG admin assistant
+   ingests the live events + user database so it learns from real runs.
+8. **Show** — the React dashboard renders decisions, honest held-out metrics,
+   the phone-call panel, and the admin RAG Q&A.
+
+---
+
 ## Quick start
 
 Requires **Python 3.10+** and **Node 18+**.
