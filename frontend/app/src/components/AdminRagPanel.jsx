@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api.js'
 
-// ------------------------------------------------------------------ SENbot (role-scoped)
-// SENbot is available to EVERY designation. Capabilities are role-scoped:
-//   * admin          -> full integrity: Q&A over runbook + live dataset, and can
-//                       SEARCH + DELETE a payer and their data.
-//   * employee / care-> read-only: can Q&A, SEARCH the database/events and
-//                       register a support query, but have NO delete / integrity.
+// ------------------------------------------------------------------ SENbot
+// SENbot is the risk manager's assistant (single admin designation). It answers
+// Q&A over the runbook + live dataset and lets the admin SEARCH + DELETE a payer
+// and their data (data-hygiene / integrity).
 
 const RAG_PRESETS = [
   'Why are legitimate payments being blocked?',
@@ -20,7 +18,7 @@ const CATEGORIES = [
   'payment_fraud', 'chargeback', 'refund', 'kya', 'other',
 ]
 
-export default function AdminRagPanel({ open, onClose, isAdmin = false, isCare = false }) {
+export default function AdminRagPanel({ open, onClose, isAdmin = true }) {
   const [q, setQ] = useState('')
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -34,7 +32,7 @@ export default function AdminRagPanel({ open, onClose, isAdmin = false, isCare =
   const [searchRes, setSearchRes] = useState(null)
   const [searchErr, setSearchErr] = useState(null)
 
-  // support-query registration (employee / care focus)
+  // support-query registration (admin)
   const [qm, setQm] = useState('')
   const [qcat, setQcat] = useState(CATEGORIES[0])
   const [qcontact, setQcontact] = useState('')
@@ -245,7 +243,6 @@ export default function AdminRagPanel({ open, onClose, isAdmin = false, isCare =
 
         <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
           Register a support query
-          {isCare && <span className="muted" style={{ fontWeight: 400, fontSize: 11, marginLeft: 6 }}>(customer-care can also manage below)</span>}
         </div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
           <input style={{ flex: 1, padding: '7px 9px' }} placeholder="Contact (phone / email)"

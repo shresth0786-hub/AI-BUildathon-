@@ -158,7 +158,7 @@ def queries_create(req: QueryCreate, user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/queries")
-def queries_list(user: dict = Depends(require_role("admin", "customer_care"))):
+def queries_list(user: dict = Depends(require_role("admin"))):
     """Full query queue (admin + customer-care only)."""
     from app.database import get_query_db
     qdb = get_query_db()
@@ -166,14 +166,14 @@ def queries_list(user: dict = Depends(require_role("admin", "customer_care"))):
 
 
 @app.get("/api/queries/stats")
-def queries_stats(user: dict = Depends(require_role("admin", "customer_care"))):
+def queries_stats(user: dict = Depends(require_role("admin"))):
     from app.database import get_query_db
     return get_query_db().stats()
 
 
 @app.patch("/api/queries/{query_id}")
 def queries_update(query_id: str, req: QueryUpdate,
-                   user: dict = Depends(require_role("admin", "customer_care"))):
+                   user: dict = Depends(require_role("admin"))):
     from app.database import get_query_db
     try:
         q = get_query_db().update_query(
@@ -372,14 +372,10 @@ def verify_event(req: VerifyEventRequest):
         raise HTTPException(500, f"verification setup failed: {exc}") from exc
 
 
-# ------------------------------------------------------------------ SENbot (admin/role Q&A)
-# SENbot is the (formerly "RAG Q&A") assistant. It is available to EVERY
-# designation. Authorization is role-scoped:
-#   * admin          -> full integrity: answers over the live dataset AND can
-#                       DELETE a payer + their data from the dataset (`integrity`).
-#   * employee / care-> read-only: SENbot can SEARCH the user database + events
-#                       and READ them, and they can register a support query,
-#                       but they have NO delete / integrity capability.
+# ------------------------------------------------------------------ SENbot (admin assistant)
+# SENbot is the (formerly "RAG Q&A") assistant. With only the admin designation
+# remaining, it gives the risk manager full integrity: answers over the runbook +
+# live dataset, plus the ability to SEARCH and DELETE a payer + their data.
 
 class RagRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=1000)
@@ -399,9 +395,9 @@ def rag_knowledge(user: dict = Depends(get_current_user)):
 
 @app.post("/api/rag/ask")
 def rag_ask(req: RagRequest, user: dict = Depends(get_current_user)):
-    """SENbot Q&A for every designation. The pipeline replies read-only; the
-    caller's role is surfaced so the UI can show role-appropriate actions
-    (admin can delete users/data, others only read/search + register queries)."""
+    """SENbot Q&A. Answers read-only over the runbook + live dataset, and always
+    carries can_manage=true for the admin."""
+
     from app.rag import ask_admin
     ans = ask_admin(req.question, det=get_detector())
     return {**ans, "can_manage": user["role"] == "admin"}
@@ -410,8 +406,7 @@ def rag_ask(req: RagRequest, user: dict = Depends(get_current_user)):
 @app.delete("/api/users/{user_id}")
 def users_delete(user_id: str, user=Depends(require_role("admin"))):
     """ADMIN-ONLY integrity action: permanently remove a payer and ALL of their
-    stored data from the dataset + user database. This is the capability
-    employee/customer-care roles do NOT have on the SENbot/dashboard."""
+    stored data from the dataset + user database."""
     from app.database import get_user_db
     removed = get_user_db().delete(user_id)
     if removed is None:

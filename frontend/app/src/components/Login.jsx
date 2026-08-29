@@ -8,18 +8,6 @@ const ROLES = {
     user: 'admin',
     pass: 'admin123',
   },
-  employee: {
-    role: 'employee',
-    label: 'Risk Employee',
-    user: 'employee',
-    pass: 'employee123',
-  },
-  customer_care: {
-    role: 'customer_care',
-    label: 'Customer Care',
-    user: 'care',
-    pass: 'care123',
-  },
 }
 
 export default function Login({ onSuccess }) {

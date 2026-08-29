@@ -422,7 +422,7 @@ class FraudDetector:
         """ADMIN integrity action (data-hygiene): permanently remove every
         recorded event belonging to `user_id` from the event + feature datasets,
         then re-persist the trimmed artifacts. Returns the number of events
-        removed. This is the capability employee/customer-care roles do NOT have."""
+        removed."""
         if self.event_df is None:
             return 0
         mask = self.event_df["user_id"].astype(str) != str(user_id)

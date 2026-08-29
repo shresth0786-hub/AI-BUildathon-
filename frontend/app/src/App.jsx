@@ -852,7 +852,6 @@ export default function App() {
   const dismissToast = (id) => setToasts((t) => t.filter((x) => x.id !== id))
 
   const isAdmin = session?.role === 'admin'
-  const isCare = session?.role === 'customer_care'
 
   const logout = () => {
     setToken(null); setSession(null)
@@ -935,7 +934,7 @@ export default function App() {
 
       <div className="app-grid">
         <aside className="side-nav">
-          {NAV.filter((n) => (n.id === 'userdb' ? isAdmin : n.id === 'queries' ? (isAdmin || isCare) : true))
+          {NAV.filter((n) => ((n.id === 'userdb' || n.id === 'queries') ? isAdmin : true))
             .map((n) => (
               <a key={n.id} className={active === n.id ? 'active' : ''} onClick={() => goto(n.id)}>{n.label}</a>
             ))}
@@ -982,13 +981,11 @@ export default function App() {
             <PhoneVerificationPanel sessions={verSessions} mode={verMode} onChange={refreshVer} />
           </Section>
 
-          {!isCare && (
-            <Section id="learning" title="Continual learning">
-              <LearningPanel />
-            </Section>
-          )}
+          <Section id="learning" title="Continual learning">
+            <LearningPanel />
+          </Section>
 
-          {(isAdmin || isCare) && (
+          {isAdmin && (
             <Section id="queries" title="Customer-care queries">
               <CustomerCarePanel />
             </Section>
@@ -1015,8 +1012,7 @@ export default function App() {
         ))}
       </div>
 
-      <AdminRagPanel open={ragOpen} onClose={() => setRagOpen(false)}
-        role={session?.role} isAdmin={isAdmin} isCare={isCare} />
+      <AdminRagPanel open={ragOpen} onClose={() => setRagOpen(false)} isAdmin={isAdmin} />
 
       <div className="spacer" />
       <footer className="muted" style={{ fontSize: 12, textAlign: 'center' }}>

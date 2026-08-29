@@ -5,8 +5,6 @@ A tiny demo auth layer (JWT-style HMAC tokens, no external deps):
 
 Roles
   * admin          -> sees everything incl. the user database + RAG
-  * employee       -> sees operations (payments, phone-verify, learning)
-  * customer_care  -> sees support-facing surface (verifications, RAG knowledge)
 
 Endpoints
   POST /api/auth/login   -> { token, role, name }
@@ -33,29 +31,17 @@ _TOKEN_TTL = 12 * 3600  # 12 hours
 
 # ------------------------------------------------------------------ demo users
 # In production this would come from a real user store / DB. For the demo we
-# ship one account per role so the login page can be tested immediately.
+# ship a single admin account so the login page can be tested immediately.
 USERS = {
     "admin": {
         "name": "Demo Admin",
         "role": "admin",
         "password": "admin123",
     },
-    "employee": {
-        "name": "Risk Employee",
-        "role": "employee",
-        "password": "employee123",
-    },
-    "care": {
-        "name": "Customer Care",
-        "role": "customer_care",
-        "password": "care123",
-    },
 }
 
 ROLE_LABELS = {
     "admin": "Administrator",
-    "employee": "Employee",
-    "customer_care": "Customer Care",
 }
 
 
