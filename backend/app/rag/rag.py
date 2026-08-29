@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from app import rag_knowledge
+from app.rag import rag_knowledge
 
 
 @dataclass

@@ -147,7 +147,7 @@ class QueryUpdate(BaseModel):
 def queries_create(req: QueryCreate, user: dict = Depends(get_current_user)):
     """Raise a new support ticket to customer care. Persisted to the QUERY
     database (separate from user/payment data)."""
-    from app.query_db import get_query_db
+    from app.database import get_query_db
     q = get_query_db().create_query(
         author=req.author or user.get("name") or user.get("username"),
         message=req.message, category=req.category, contact=req.contact,
@@ -158,21 +158,21 @@ def queries_create(req: QueryCreate, user: dict = Depends(get_current_user)):
 @app.get("/api/queries")
 def queries_list(user: dict = Depends(require_role("admin", "customer_care"))):
     """Full query queue (admin + customer-care only)."""
-    from app.query_db import get_query_db
+    from app.database import get_query_db
     qdb = get_query_db()
     return {"queries": qdb.all(), "stats": qdb.stats()}
 
 
 @app.get("/api/queries/stats")
 def queries_stats(user: dict = Depends(require_role("admin", "customer_care"))):
-    from app.query_db import get_query_db
+    from app.database import get_query_db
     return get_query_db().stats()
 
 
 @app.patch("/api/queries/{query_id}")
 def queries_update(query_id: str, req: QueryUpdate,
                    user: dict = Depends(require_role("admin", "customer_care"))):
-    from app.query_db import get_query_db
+    from app.database import get_query_db
     try:
         q = get_query_db().update_query(
             query_id,
@@ -254,7 +254,7 @@ def investigate(req: InvestigateRequest):
     # persist the live-investigated user's details to the user database so the
     # RAG pipeline and dashboard can look them up (survives restarts).
     try:
-        from app.user_db import get_user_db
+        from app.database import get_user_db
         get_user_db().upsert_user(
             str(evt.get("user_id") or ""), evt, outcome=res,
         )
@@ -269,7 +269,7 @@ def users_list(user=Depends(require_role("admin")),
                risk: Optional[str] = Query(None, pattern="^(approve|review|block)$")):
     """Stored user/transaction details for every live-investigated payment.
     ADMIN ONLY."""
-    from app.user_db import get_user_db
+    from app.database import get_user_db
     rows = get_user_db().all()
     if risk:
         rows = [r for r in rows if r.get("decision") == risk]
@@ -278,13 +278,13 @@ def users_list(user=Depends(require_role("admin")),
 
 @app.get("/api/users/stats")
 def users_stats(user=Depends(require_role("admin"))):
-    from app.user_db import get_user_db
+    from app.database import get_user_db
     return get_user_db().stats()
 
 
 @app.get("/api/users/{user_id}")
 def users_get(user_id: str, user=Depends(require_role("admin"))):
-    from app.user_db import get_user_db
+    from app.database import get_user_db
     rec = get_user_db().get(user_id)
     if rec is None:
         raise HTTPException(404, "user not found in user database")
@@ -364,7 +364,7 @@ class RagRequest(BaseModel):
 
 @app.get("/api/rag/status")
 def rag_status(user=Depends(require_role("admin"))):
-    from app.rag_pipeline import pipeline_status
+    from app.rag import pipeline_status
     return pipeline_status()
 
 
@@ -380,7 +380,7 @@ def rag_ask(req: RagRequest, user=Depends(require_role("admin"))):
     live source (user database, events, feedback, phone verifications, metrics),
     feeds them to the RAG engine, and returns a grounded answer for the admin
     dashboard."""
-    from app.rag_pipeline import ask_admin
+    from app.rag import ask_admin
     return ask_admin(req.question, det=get_detector())
 
 

@@ -180,8 +180,13 @@ razorpay-fraud-detector/
 │   │   ├── investigator.py        # ensemble + evidence
 │   │   ├── verification.py        # phone-call payment confirmation (OTP)
 │   │   ├── feedback.py            # continual learning
-│   │   ├── rag.py + rag_pipeline.py  # admin Q&A (offline RAG)
-│   │   ├── user_db.py             # persisted user database
+│   │   ├── rag/                     # admin Q&A (offline RAG)
+│   │   │   ├── rag_knowledge.py     #   static "issues & remedies" runbook
+│   │   │   ├── rag.py               #   retrieval + grounded answering
+│   │   │   └── rag_pipeline.py      #   orchestration, feeds live DB context
+│   │   ├── database/                # persisted stores (users.json, queries.json)
+│   │   │   ├── user_db.py           #   user / payer database
+│   │   │   └── query_db.py          #   customer-care query database
 │   │   └── main.py                # FastAPI
 │   ├── train.py                   # train + save artifacts
 │   └── requirements.txt
