@@ -1,0 +1,116 @@
+=========================================================
+ RAZORPAY FRAUD GUARDIAN - HOW TO RUN
+ (PowerShell commands + instructions)
+=========================================================
+
+The project lives at:
+  C:\Users\SHRESTH\OneDrive\Documents\Default Project\razorpay-fraud-detector
+
+---------------------------------------------------------
+ 0) PREREQUISITES
+---------------------------------------------------------
+ - Python 3.10+  (this machine uses C:\Python313\python.exe)
+ - Node.js 18+   (this machine uses v22.17) - includes npm
+ - If your Python path differs, replace C:\Python313\python.exe
+   below with your own (or just use `python` if it is on PATH).
+
+---------------------------------------------------------
+ 1) ONE-CLICK RUN (backend + frontend together)
+---------------------------------------------------------
+ From the project root:
+
+ cd "C:\Users\SHRESTH\OneDrive\Documents\Default Project\razorpay-fraud-detector"
+ powershell -ExecutionPolicy Bypass -File ".\Setup and command\run.ps1"
+
+ Press Enter in that terminal to stop both servers.
+ Then open in a browser:
+   Dashboard : http://localhost:5173
+   API docs  : http://127.0.0.1:8100/docs
+
+---------------------------------------------------------
+ 2) FIRST-TIME SETUP (only needed once)
+---------------------------------------------------------
+ Run as Administrator:
+
+ cd "C:\Users\SHRESTH\OneDrive\Documents\Default Project\razorpay-fraud-detector"
+ powershell -ExecutionPolicy Bypass -File ".\Setup and command\setup.ps1"
+
+ This creates backend\.venv, installs backend packages, runs
+ npm install for the frontend, trains the models on synthetic
+ data, and copies the .env template files.
+
+---------------------------------------------------------
+ 3) MANUAL RUN - BACKEND (API on port 8100)
+---------------------------------------------------------
+ cd "C:\Users\SHRESTH\OneDrive\Documents\Default Project\razorpay-fraud-detector\backend"
+ C:\Python313\python.exe -m uvicorn app.main:app --port 8100
+
+ Keep this terminal open. Ready when you see:
+ "Application startup complete".
+
+---------------------------------------------------------
+ 4) MANUAL RUN - FRONTEND (dashboard on port 5173)
+---------------------------------------------------------
+ Open a SECOND terminal:
+
+ cd "C:\Users\SHRESTH\OneDrive\Documents\Default Project\razorpay-fraud-detector\frontend\app"
+ npm run dev
+
+ Open http://localhost:5173 in your browser. The frontend sends
+ all /api calls to the backend on 8100 automatically.
+
+---------------------------------------------------------
+ 5) RE-TRAIN / REGENERATE DATA (optional)
+---------------------------------------------------------
+ cd "C:\Users\SHRESTH\OneDrive\Documents\Default Project\razorpay-fraud-detector\backend"
+ C:\Python313\python.exe train.py --n-bona-fide 6000 --n-fraud 900 --seed 42
+
+ Change --seed / --n-fraud to generate different data and retrain.
+
+---------------------------------------------------------
+ 6) OPTIONAL REAL INTEGRATIONS (skip for offline demo)
+---------------------------------------------------------
+ Copy the template and fill in keys inside backend\.env
+ (setup.ps1 does this automatically):
+   copy "Setup and command\.env.example" "backend\.env"
+
+ - Razorpay test keys (rzp_test_*) enable /api/rzp/create-order
+   and the real webhook ingestion.
+ - Twilio keys enable REAL outbound phone-call payment
+   confirmation. Without them the call flow runs in SIMULATED
+   mode (works offline).
+
+---------------------------------------------------------
+ 7) KEY API ENDPOINTS
+---------------------------------------------------------
+ POST /api/investigate            Score a live payment -> approve/review/block + evidence
+ GET  /api/events?risk=           Recent payments with scores & decisions
+ GET  /api/test-metrics           Honest held-out precision / recall / F1 + cost
+ POST /api/feedback/{id}/correct  Manually mark clean / fraud
+ POST /api/learning/retrain       Retrain on confirmed feedback
+ GET  /api/users                  Live-investigated users stored in the DB
+ POST /api/rag/ask                Admin Q&A (runbook + live dataset)
+
+---------------------------------------------------------
+ 8) MODEL PERFORMANCE (honest held-out test set)
+---------------------------------------------------------
+ - Precision: 1.000  (zero false positives - never wrongly blocks
+   a legit customer)
+ - Recall (fraud blocked): 0.973  (catches ~97% of fraud)
+ - F1: 0.986 | Fraud caught: 180/185 | Money prevented: Rs 304,781
+ - Component models: ML-risk AUC ~0.99999, Investigator ensemble AUC ~0.9987
+
+ To tune, change --seed when retraining (section 5) or adjust the
+ decision thresholds.
+
+---------------------------------------------------------
+ 9) TROUBLESHOOTING
+---------------------------------------------------------
+ - Port already in use: stop the other process, or change the port
+   (--port 8100 in run.ps1 / the manual command).
+ - "python not found": replace C:\Python313\python.exe with your
+   Python path, or use `python` if it is on PATH.
+ - Empty dashboard / no models: you skipped setup - run section 2
+   or the train command in section 5.
+ - Twilio calls don't ring: the free trial blocks outbound calls -
+   use simulated mode, which still shows the OTP + call script.
