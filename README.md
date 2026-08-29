@@ -48,10 +48,26 @@ flowchart TB
     B --> L
     L -->|"smarter over time"| I
 
-    L -.-> RAG["Admin RAG Q&A<br/>learns from live data"]
-    A -.-> DASH["React Dashboard"]
+    subgraph DB["Persistence (app/database)"]
+        UDB["user_db<br/>users.json"]
+        QDB["query_db<br/>queries.json"]
+    end
+
+    subgraph RAG["Admin RAG (app/rag)"]
+        RP["rag_pipeline<br/>gathers live context"]
+        RE["rag engine<br/>retrieval + grounding"]
+        RP --> RE
+    end
+
+    L -.->|"learns from live data"| RP
+    UDB -.->|"live user context"| RP
+    QDB -.->|"prior Q&A"| RE
+    RE -.->|"store admin Q&A"| QDB
+    RE -.-> DASH["React Dashboard"]
+    A -.-> DASH
     B -.-> DASH
     R -.-> DASH
+    QDB -.-> DASH
 ```
 
 **The one-paragraph story:** every payment becomes a leak-safe feature vector,
