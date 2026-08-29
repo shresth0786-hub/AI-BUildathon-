@@ -645,8 +645,8 @@ export default function App() {
       <header>
         <div className="logo">🛡</div>
         <div>
-          <h1>Razorpay Fraud Guardian</h1>
-          <p>ML Risk · Behaviour AI · Graph Engine → AI Investigator</p>
+          <h1>Sentinel AI</h1>
+          <p>Razorpay Fraud Guardian · ML Risk · Behaviour AI · Graph Engine → AI Investigator</p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           {rzp && <span className={`pill ${rzp.configured ? 'online' : ''}`}>

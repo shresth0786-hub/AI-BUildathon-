@@ -32,7 +32,7 @@ from app.verification import verifier
 
 _ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "..", "artifacts")
 
-app = FastAPI(title="Razorpay Fraud Guardian API", version="1.0.0")
+app = FastAPI(title="Sentinel AI API — Razorpay Fraud Guardian", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,

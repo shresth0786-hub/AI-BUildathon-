@@ -1,9 +1,11 @@
-# Razorpay Fraud Guardian
+# Razorpay Fraud Guardian — powered by Sentinel AI
 
 An **end-to-end AI fraud-detection system** built for the Razorpay buildathon,
 submitted under **Track 02 — AI Risk Manager** (a working detector with
 **honest precision/recall and false-positive cost on a held-out test set**;
-strictly **defense-only**). It mirrors the reference architecture:
+strictly **defense-only**). **Sentinel AI** watches every payment, explains its
+verdicts with evidence, phone-confirms borderline cases, and learns over time.
+It mirrors the reference architecture:
 
 ```
 RAZORPAY TEST PAYMENTS → Feature Engineering
