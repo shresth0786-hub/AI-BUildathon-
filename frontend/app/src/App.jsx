@@ -122,13 +122,13 @@ function Section({ id, title, children, defaultOpen = true }) {
 function DecisionPie({ metrics }) {
   const data = [
     { name: 'Approved', value: metrics.approve, color: C.green },
-    { name: 'Review', value: metrics.review, color: C.amber },
+    { name: 'Pending (review band)', value: metrics.review, color: C.amber },
     { name: 'Blocked', value: metrics.block, color: C.red },
   ]
   return (
     <div className="card">
       <h3>Decision distribution</h3>
-      <ResponsiveContainer width="100%" height={220}>
+      <ResponsiveContainer width="100%" height={215}>
         <PieChart>
           <Pie data={data} dataKey="value" nameKey="name" innerRadius={55}
             outerRadius={85} paddingAngle={2}>
@@ -138,6 +138,11 @@ function DecisionPie({ metrics }) {
           <Legend formatter={(v) => <span style={{ color: 'var(--muted)' }}>{v}</span>} />
         </PieChart>
       </ResponsiveContainer>
+      <div className="grid grid-3" style={{ marginTop: 8 }}>
+        <div className="score-box"><div className="m green">Approved</div><div className="p">{metrics.approve}</div></div>
+        <div className="score-box"><div className="m amber">Pending</div><div className="p">{metrics.review}</div></div>
+        <div className="score-box"><div className="m red">Blocked</div><div className="p">{metrics.block}</div></div>
+      </div>
       <div className="muted" style={{ fontSize: 13 }}>
         {metrics.fraud_caught}/{metrics.fraud_total} fraud caught ·{' '}
         {metrics.false_alarms} false alarms · leakage {(metrics.leakage * 100).toFixed(1)}%
@@ -403,7 +408,8 @@ function PhoneVerifyBox({ pv, busy, onAction }) {
   return (
     <div className="phone-box" style={{ borderColor: approved ? C.green : blocked ? C.red : C.amber }}>
       <h4 style={{ margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: 8 }}>
-        📞 Phone-call payment confirmation
+        {pv.channel === 'sms' ? '✉️' : pv.channel === 'whatsapp' ? '💬' : '📞'}{' '}
+        Payment confirmation — {pv.channel === 'call' ? 'phone call' : pv.channel === 'sms' ? 'SMS' : 'WhatsApp'}
         <span className={`pill ${approved ? 'online' : blocked ? 'offline' : ''}`}>{pv.status.toUpperCase()}</span>
       </h4>
       <div className="muted" style={{ fontSize: 13 }}>
@@ -424,22 +430,27 @@ function PhoneVerifyBox({ pv, busy, onAction }) {
         </div>
       )}
       <details style={{ marginTop: 8 }}>
-        <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>Call script (agent reads this)</summary>
+        <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>
+          {pv.channel === 'call' ? 'Call script (agent reads this)' : 'OTP message / delivery script'}
+        </summary>
         {(pv.call_script || []).map((line, i) => <div key={i} className="muted" style={{ fontSize: 13, marginTop: 4 }}>• {line}</div>)}
       </details>
-      {(pv.call_delivered || pv.call_sid || pv.recording_available) && (
+      {(pv.delivered || pv.delivery_sid || pv.recording_available) && (
         <div className="rec-log" style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Recorded call</div>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+            Delivery — {pv.channel === 'call' ? 'phone call' : pv.channel === 'sms' ? 'SMS' : 'WhatsApp'}
+          </div>
           <div className="muted" style={{ fontSize: 13 }}>
-            Delivery: <b>{pv.call_delivered || '—'}</b>
-            {pv.call_sid && <> · SID <span className="mono">{pv.call_sid}</span></>}
+            Status: <b>{pv.delivered || '—'}</b>
+            {pv.message && pv.channel !== 'call' && <> · via Twilio {pv.message}</>}
+            {pv.delivery_sid && <> · SID <span className="mono">{pv.delivery_sid}</span></>}
             {pv.created_at && <> · <span className="mono">{new Date(pv.created_at * 1000).toLocaleString()}</span></>}
           </div>
-          {pv.recording_available && pv.call_sid && (
+          {pv.recording_available && pv.channel === 'call' && pv.delivery_sid && (
             <div style={{ fontSize: 13, marginTop: 4 }}>
               <span className="pill online">Recording enabled</span>{' '}
               <a className="muted" style={{ textDecoration: 'underline' }} target="_blank" rel="noreferrer"
-                href={`https://console.twilio.com/us1/develop/voice/manage/recordings?sid=${pv.call_sid}`}>
+                href={`https://console.twilio.com/us1/develop/voice/manage/recordings?sid=${pv.delivery_sid}`}>
                 View audio in Twilio →
               </a>
             </div>
@@ -472,10 +483,11 @@ function PhoneVerificationPanel({ sessions, mode, onChange }) {
 
   return (
     <div className="card">
-      <h3>Phone-call payment confirmations</h3>
+      <h3>OTP payment confirmations</h3>
       <div className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-        Mode: <b>{mode}</b> — medium-risk payments are held for an OTP/call before settlement.
-        Run the <b>Borderline</b> scenario above to open a session.
+        Mode: <b>{mode}</b> — medium-risk payments are held for an OTP
+        (call/SMS/WhatsApp) before settlement. Run the <b>Borderline</b> scenario
+        above to open a session.
       </div>
       {err && <p style={{ color: C.red, fontSize: 13 }}>{err}</p>}
       {sessions.length === 0 && <div className="muted" style={{ fontSize: 13 }}>No verification sessions yet.</div>}
@@ -492,6 +504,7 @@ function LiveTest({ onInvestigate }) {
   const [running, setRunning] = useState(false)
   const [mode, setMode] = useState('fraud')
   const [phone, setPhone] = useState(import.meta.env.VITE_DEMO_PHONE || '')
+  const [channel, setChannel] = useState('call')
   const [out, setOut] = useState(null)
   const [err, setErr] = useState(null)
 
@@ -499,7 +512,7 @@ function LiveTest({ onInvestigate }) {
     setRunning(true); setErr(null); setOut(null)
     try {
       const body = mode === 'fraud' ? await api.demoFraud()
-        : mode === 'review' ? await api.demoBorderline(phone) : await api.demoClean()
+        : mode === 'review' ? await api.demoBorderline(phone, channel) : await api.demoClean()
       const res = await api.investigate(body)
       setOut(res)
       if (onInvestigate) onInvestigate(res)
@@ -558,9 +571,19 @@ function LiveTest({ onInvestigate }) {
         </div>
         {mode === 'review' && (
           <div>
-            <label title="Twilio will call this number in real mode">Call number (review)</label>
+            <label title="Twilio will reach this number on the chosen channel">Payer number</label>
             <input value={phone} onChange={(e) => setPhone(e.target.value)}
               placeholder="+91XXXXXXXXXX" />
+          </div>
+        )}
+        {mode === 'review' && (
+          <div>
+            <label>OTP channel</label>
+            <select value={channel} onChange={(e) => setChannel(e.target.value)}>
+              <option value="call">Phone call</option>
+              <option value="sms">SMS</option>
+              <option value="whatsapp">WhatsApp</option>
+            </select>
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
@@ -900,11 +923,9 @@ export default function App() {
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
           <span className="pill">{session.name} · {roleLabel}</span>
-          {isAdmin && (
-            <button className="btn" onClick={() => setRagOpen(true)} style={{ padding: '8px 12px' }}>
-              RAG Q&amp;A
-            </button>
-          )}
+          <button className="btn" onClick={() => setRagOpen(true)} style={{ padding: '8px 12px' }}>
+            🤖 SENbot
+          </button>
           {rzp && <span className={`pill ${rzp.configured ? 'online' : ''}`}>
             {rzp.configured ? 'Razorpay test-mode: ' + (rzp.live ? 'LIVE ⚠' : 'configured') : 'Keyless demo'}
           </span>}
@@ -957,7 +978,7 @@ export default function App() {
             </div>
           </Section>
 
-          <Section id="phone" title="Phone-call payment confirmation (review band)">
+          <Section id="phone" title="OTP payment confirmation (call / SMS / WhatsApp · review band)">
             <PhoneVerificationPanel sessions={verSessions} mode={verMode} onChange={refreshVer} />
           </Section>
 
@@ -994,7 +1015,8 @@ export default function App() {
         ))}
       </div>
 
-      {isAdmin && <AdminRagPanel open={ragOpen} onClose={() => setRagOpen(false)} />}
+      <AdminRagPanel open={ragOpen} onClose={() => setRagOpen(false)}
+        role={session?.role} isAdmin={isAdmin} isCare={isCare} />
 
       <div className="spacer" />
       <footer className="muted" style={{ fontSize: 12, textAlign: 'center' }}>

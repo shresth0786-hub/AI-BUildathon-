@@ -284,6 +284,19 @@ def users_stats(user=Depends(require_role("admin"))):
     return get_user_db().stats()
 
 
+# NOTE: /api/users/search MUST be declared BEFORE /api/users/{user_id} or FastAPI
+# would route "search" into the {user_id} path segment.
+@app.get("/api/users/search")
+def users_search(q: str = Query("", max_length=256),
+                 user: dict = Depends(get_current_user)):
+    """SENbot read-only search across the user database (by phone, user id,
+    name, card). Available to every authenticated role — but read-only: no
+    delete / integrity here. Admin uses the same endpoint for lookups."""
+    from app.database import get_user_db
+    rows = get_user_db().search(q)
+    return {"users": rows}
+
+
 @app.get("/api/users/{user_id}")
 def users_get(user_id: str, user=Depends(require_role("admin"))):
     from app.database import get_user_db
@@ -382,17 +395,6 @@ def rag_status(user: dict = Depends(get_current_user)):
 def rag_knowledge(user: dict = Depends(get_current_user)):
     from app.rag import get_rag
     return {"issues": get_rag().knowledge()}
-
-
-@app.get("/api/users/search")
-def users_search(q: str = Query("", max_length=256),
-                 user: dict = Depends(get_current_user)):
-    """SENbot read-only search across the user database (by phone, user id,
-    name, card). Available to every authenticated role — but read-only: no
-    delete / integrity here. Admin uses the same endpoint for lookups."""
-    from app.database import get_user_db
-    rows = get_user_db().search(q)
-    return {"users": rows}
 
 
 @app.post("/api/rag/ask")

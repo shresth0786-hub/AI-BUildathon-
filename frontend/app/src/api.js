@@ -62,7 +62,7 @@ export const api = {
   rzpStatus: () => get('/rzp/status'),
   demoFraud: () => get('/demo/fraud'),
   demoClean: () => get('/demo/clean'),
-  demoBorderline: (phone) => ({
+  demoBorderline: (phone, channel) => ({
     event: {
       user_id: 'usr_rev_demo',
       device_id: 'dev_new_demo',
@@ -81,6 +81,7 @@ export const api = {
       three_ds_passed: true,
       status: 'captured',
       phone: phone || import.meta.env.VITE_DEMO_PHONE || '',
+      channel: channel || 'call',
     },
     history: [],
   }),
@@ -97,6 +98,15 @@ export const api = {
   ragStatus: () => get('/rag/status'),
   users: () => get('/users'),
   user: (id) => get(`/users/${id}`),
+  usersSearch: (q) => get(`/users/search?q=${encodeURIComponent(q || '')}`),
+  usersDelete: (id) =>
+    fetch(BASE + `/users/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).then((res) => {
+      if (!res.ok) return res.json().then((j) => { throw new Error(j?.detail || `DELETE /users/${id} -> ${res.status}`) })
+      return res.json()
+    }),
   queryCreate: (body) => post('/queries', body),
   queries: () => get('/queries'),
   queryUpdate: (id, body) => patch(`/queries/${id}`, body),

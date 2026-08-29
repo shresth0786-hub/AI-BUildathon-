@@ -9,6 +9,7 @@ backend/artifacts/*
 backend/data/*
 backend/database/*
 !backend/database/.gitkeep
+backend/app/database/db/*
 
 # Frontend
 frontend/app/node_modules/
