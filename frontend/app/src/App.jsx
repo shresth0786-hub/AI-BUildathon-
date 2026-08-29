@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer,
   XAxis, YAxis, Tooltip, CartesianGrid, Legend,
@@ -12,17 +12,108 @@ import CustomerCarePanel from './components/CustomerCarePanel.jsx'
 // ------------------------------------------------------------------ colors
 const C = { green: '#00b894', amber: '#fdcb6e', red: '#ff7675', accent: '#6c5ce7', blue: '#74b9ff' }
 
+// ------------------------------------------------------------------ hooks
+function useCountUp(target, dur = 900) {
+  const [val, setVal] = useState(0)
+  const prev = useRef(0)
+  useEffect(() => {
+    const from = prev.current
+    const start = performance.now()
+    let raf
+    const step = (now) => {
+      const p = Math.min(1, (now - start) / dur)
+      const eased = 1 - Math.pow(1 - p, 3)
+      setVal(from + (target - from) * eased)
+      if (p < 1) raf = requestAnimationFrame(step)
+      else prev.current = target
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [target, dur])
+  return val
+}
+
+function useScrollSpy(ids) {
+  const [active, setActive] = useState(ids[0])
+  useEffect(() => {
+    const onScroll = () => {
+      let cur = ids[0]
+      for (const id of ids) {
+        const el = document.getElementById(id)
+        if (el && el.getBoundingClientRect().top <= 120) cur = id
+      }
+      setActive(cur)
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [ids])
+  return active
+}
+
+function sortRows(rows, key, dir) {
+  if (!key) return rows
+  return [...rows].sort((a, b) => {
+    const av = a[key]; const bv = b[key]
+    if (av == null) return 1
+    if (bv == null) return -1
+    const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv))
+    return dir === 'asc' ? cmp : -cmp
+  })
+}
+
+function matches(rows, q) {
+  if (!q) return rows
+  const s = q.toLowerCase()
+  return rows.filter((r) =>
+    [r.user_id, r.merchant, r.decision, r.fraud_vector, r.event_id, r.name, r.phone]
+      .some((v) => v && String(v).toLowerCase().includes(s)))
+}
+
+export function useTheme() {
+  const [theme, setTheme] = useState(() => localStorage.getItem('sentinel_theme') || 'dark')
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('sentinel_theme', theme)
+  }, [theme])
+  const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), [])
+  return [theme, toggleTheme]
+}
+
+// ------------------------------------------------------------------ basic UI
 function Badge({ decision }) {
   return <span className={`badge ${decision}`}>{decision.toUpperCase()}</span>
 }
 
-// ------------------------------------------------------------------ cards
 function Stat({ label, value, sub, cls = '' }) {
   return (
     <div className="card stat">
       <div className="label">{label}</div>
-      <div className={`value ${cls}`}>{value}</div>
+      <div className={`value count-up ${cls}`}>{value}</div>
       {sub && <div className="sub">{sub}</div>}
+    </div>
+  )
+}
+
+function AnimatedStat({ label, num, format, sub, cls = '' }) {
+  const v = useCountUp(num)
+  return (
+    <Stat label={label}
+      value={format ? format(v) : Math.round(v).toLocaleString()}
+      sub={sub} cls={cls} />
+  )
+}
+
+// ------------------------------------------------------------------ collapsible section
+function Section({ id, title, children, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div id={id} className="section-block" style={{ scrollMarginTop: 20 }}>
+      <h2 className={`section section-head ${open ? 'open' : ''}`} onClick={() => setOpen((o) => !o)}>
+        <span className="chev">▶</span>{title}
+        <span className="muted" style={{ fontSize: 11, fontWeight: 400, marginLeft: 6 }}>{open ? '· click to collapse' : '· collapsed · click'}</span>
+      </h2>
+      <div className={`section-body ${open ? '' : 'collapsed'}`}>{children}</div>
     </div>
   )
 }
@@ -43,8 +134,8 @@ function DecisionPie({ metrics }) {
             outerRadius={85} paddingAngle={2}>
             {data.map((d) => <Cell key={d.name} fill={d.color} />)}
           </Pie>
-          <Tooltip contentStyle={{ background: '#151d30', border: '1px solid #24304d', borderRadius: 10 }} />
-          <Legend formatter={(v) => <span style={{ color: '#8b98b8' }}>{v}</span>} />
+          <Tooltip contentStyle={{ background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 10 }} />
+          <Legend formatter={(v) => <span style={{ color: 'var(--muted)' }}>{v}</span>} />
         </PieChart>
       </ResponsiveContainer>
       <div className="muted" style={{ fontSize: 13 }}>
@@ -93,7 +184,7 @@ function ModelScores({ weights }) {
           <CartesianGrid stroke="#1c2640" horizontal={false} />
           <XAxis type="number" stroke="#8b98b8" />
           <YAxis type="category" dataKey="name" stroke="#8b98b8" width={90} />
-          <Tooltip contentStyle={{ background: '#151d30', border: '1px solid #24304d', borderRadius: 10 }} />
+          <Tooltip contentStyle={{ background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 10 }} />
           <Bar dataKey="w" name="coef" radius={[0, 6, 6, 0]}>
             {data.map((d, i) => <Cell key={i} fill={[C.accent, C.accent2 ?? C.blue, C.blue][i]} />)}
           </Bar>
@@ -103,20 +194,78 @@ function ModelScores({ weights }) {
   )
 }
 
+// ------------------------------------------------------------------ sortable header helper
+function SortableTh({ label, k, sortKey, sortDir, onSort }) {
+  const active = sortKey === k
+  return (
+    <th className="sortable" onClick={() => onSort(k)}>
+      {label}
+      {active && <span className="sort-arrow">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+    </th>
+  )
+}
+
+// ------------------------------------------------------------------ logic for both stream tables
+function useStreamTable(rows) {
+  const [q, setQ] = useState('')
+  const [sortKey, setSortKey] = useState('')
+  const [sortDir, setSortDir] = useState('desc')
+  const onSort = (k) => {
+    if (sortKey === k) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(k); setSortDir('asc') }
+  }
+  const filtered = matches(rows, q)
+  const sorted = sortRows(filtered, sortKey, sortDir)
+  return { q, setQ, sortKey, sortDir, onSort, rows: sorted }
+}
+
+function EventRows({ rows, onSelect, onRisk }) {
+  return rows.map((r) => {
+    const riskColor = r.p_investigator > 0.6 ? C.red : r.p_investigator > 0.35 ? C.amber : C.green
+    return (
+      <tr className={onSelect ? 'clickable' : ''} key={r.event_id}
+        onClick={onSelect ? () => onSelect(r.event_id) : undefined}>
+        <td className="mono">{r.event_id.slice(0, 18)}</td>
+        <td>{r.user_id}</td>
+        <td>{r.merchant}</td>
+        <td>₹{r.amount_inr.toLocaleString('en-IN')}</td>
+        <td style={{ color: riskColor }}>{(r.p_investigator * 100).toFixed(1)}%</td>
+        <td><Badge decision={r.decision} /></td>
+        <td className="muted">{r.fraud_vector ? r.fraud_vector.replace(/_/g, ' ') : '—'}</td>
+        {onRisk !== undefined && (
+          <td className="muted" style={{ fontSize: 12 }}>{onRisk}</td>
+        )}
+      </tr>
+    )
+  })
+}
+
+function StreamToolbar({ q, setQ, placeholder }) {
+  return (
+    <div className="table-toolbar">
+      <input className="search" value={q} onChange={(e) => setQ(e.target.value)}
+        placeholder={placeholder || 'Search users, merchants, decisions…'} />
+    </div>
+  )
+}
+
 // ------------------------------------------------------------------ table
 function EventsTable({ onSelect }) {
   const [risk, setRisk] = useState('')
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
+  const { q, setQ, sortKey, sortDir, onSort, rows: view } = useStreamTable(rows)
 
   useEffect(() => {
     setLoading(true)
     api.events(risk, 250).then(setRows).catch(() => setRows([])).finally(() => setLoading(false))
   }, [risk])
 
+  const viewWithRisk = view.map((r) => ({ ...r, _risk: risk || 'all' }))
+
   return (
     <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <h3 style={{ margin: 0 }}>Recent payments (top risk)</h3>
         <select value={risk} onChange={(e) => setRisk(e.target.value)} style={{ width: 160 }}>
           <option value="">All</option>
@@ -125,27 +274,27 @@ function EventsTable({ onSelect }) {
           <option value="block">Blocked</option>
         </select>
       </div>
+      <StreamToolbar q={q} setQ={setQ} placeholder="Search this stream… (e.g. a merchant or user)" />
+      <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+        Click a row to open the interactive investigation report. Click a column header to sort.
+      </p>
       <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
-            <tr><th>Event</th><th>User</th><th>Merchant</th><th>Amount</th><th>Risk</th><th>Decision</th><th>Vector</th></tr>
+            <tr>
+              <th className="sortable" onClick={() => onSort('event_id')}>Event{sortKey === 'event_id' && <span className="sort-arrow">{sortDir === 'asc' ? '▲' : '▼'}</span>}</th>
+              <SortableTh label="User" k="user_id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Merchant" k="merchant" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Amount" k="amount_inr" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <th>Risk</th>
+              <SortableTh label="Decision" k="decision" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <th>Vector</th>
+            </tr>
           </thead>
           <tbody>
             {loading && <tr><td colSpan={7} className="muted">Loading…</td></tr>}
-            {!loading && rows.length === 0 && <tr><td colSpan={7} className="muted">No events</td></tr>}
-            {rows.map((r) => (
-              <tr className="clickable" key={r.event_id} onClick={() => onSelect(r.event_id)}>
-                <td className="mono">{r.event_id.slice(0, 18)}</td>
-                <td>{r.user_id}</td>
-                <td>{r.merchant}</td>
-                <td>₹{r.amount_inr.toLocaleString('en-IN')}</td>
-                <td style={{ color: r.p_investigator > 0.6 ? C.red : r.p_investigator > 0.35 ? C.amber : C.green }}>
-                  {(r.p_investigator * 100).toFixed(1)}%
-                </td>
-                <td><Badge decision={r.decision} /></td>
-                <td className="muted">{r.fraud_vector ? r.fraud_vector.replace(/_/g, ' ') : '—'}</td>
-              </tr>
-            ))}
+            {!loading && viewWithRisk.length === 0 && <tr><td colSpan={7} className="muted">No events match.</td></tr>}
+            <EventRows rows={viewWithRisk} onSelect={onSelect} />
           </tbody>
         </table>
       </div>
@@ -154,36 +303,62 @@ function EventsTable({ onSelect }) {
 }
 
 // ------------------------------------------------------------------ detail
+function Gauge({ label, pct, color }) {
+  return (
+    <div style={{ textAlign: 'center' }}>
+      <div className="gauge-ring" style={{ '--p': Math.round(pct * 100), '--ring': color, margin: '0 auto' }}>
+        <span className="gauge-val">{(pct * 100).toFixed(0)}%</span>
+      </div>
+      <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>{label}</div>
+    </div>
+  )
+}
+
 function EventDetail({ id, onClose }) {
   const [d, setD] = useState(null)
   const [err, setErr] = useState(null)
+  const [copied, setCopied] = useState(false)
   useEffect(() => {
     api.event(id).then(setD).catch((e) => setErr(e.message))
   }, [id])
 
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(d.report || '')
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch { /* clipboard unavailable */ }
+  }
+
+  const decisionColor = d?.decision === 'block' ? C.red : d?.decision === 'review' ? C.amber : C.green
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           <h2 style={{ margin: 0, fontSize: 18 }}>Investigation Report</h2>
-          <button className="btn ghost" onClick={onClose}>Close</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn ghost" onClick={copy} title="Copy the full report to the clipboard">
+              {copied ? 'Copied ✓' : 'Copy report'}
+            </button>
+            <button className="btn ghost" onClick={onClose}>Close</button>
+          </div>
         </div>
         {err && <p className="red" style={{ color: C.red }}>Error: {err}</p>}
         {!err && !d && <p className="muted">Loading…</p>}
         {d && (
           <>
             <div className="spacer" />
-            <div className="grid grid-3">
-              <div className="score-box"><div className="m">ML Risk</div><div className="p">{(d.scores.ml_risk * 100).toFixed(1)}%</div></div>
-              <div className="score-box"><div className="m">Behaviour AI</div><div className="p">{(d.scores.behaviour_ai * 100).toFixed(1)}%</div></div>
-              <div className="score-box"><div className="m">Graph Engine</div><div className="p">{(d.scores.graph_engine * 100).toFixed(1)}%</div></div>
+            <div className="grid grid-4">
+              <Gauge label="ML Risk" pct={d.scores.ml_risk} color={C.green} />
+              <Gauge label="Behaviour AI" pct={d.scores.behaviour_ai} color={C.blue} />
+              <Gauge label="Graph Engine" pct={d.scores.graph_engine} color={C.amber} />
+              <Gauge label="Investigator" pct={d.scores.investigator} color={C.accent} />
             </div>
             <div className="grid grid-2" style={{ marginTop: 16 }}>
-              <div className="score-box" style={{ borderColor: d.decision === 'block' ? C.red : d.decision === 'review' ? C.amber : C.green }}>
+              <div className="score-box" style={{ borderColor: decisionColor }}>
                 <div className="m">Combined decision</div>
-                <div className="p" style={{ color: d.decision === 'block' ? C.red : d.decision === 'review' ? C.amber : C.green }}>
-                  {d.decision.toUpperCase()}
-                </div>
+                <div className="p" style={{ color: decisionColor }}>{d.decision.toUpperCase()}</div>
                 <div style={{ fontSize: 13 }}>₹{d.amount_inr.toLocaleString('en-IN')} · {d.merchant} · {d.user_id}</div>
               </div>
               <div className="score-box">
@@ -195,14 +370,24 @@ function EventDetail({ id, onClose }) {
               </div>
             </div>
             <div className="spacer" />
-            {d.evidence.length > 0 && (
-              <ul className="evidence">
-                {d.evidence.map((e, i) => (
-                  <li key={i}>• <span className="tag">[{e.model}]</span> {e.detail}</li>
-                ))}
-              </ul>
+            <h3 style={{ textTransform: 'none', letterSpacing: 0, color: 'var(--text)' }}>Evidence — why this verdict</h3>
+            {d.evidence.length > 0 ? (
+              d.evidence.map((e, i) => (
+                <div key={i} className={`evidence-card model-${e.model}`}>
+                  <div className="ec-head">Step {i + 1} · {e.model.replace(/_/g, ' ')} · {e.signal}</div>
+                  <div style={{ fontSize: 13 }}>{e.detail}</div>
+                  {typeof e.weight === 'number' && (
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>weight: {(e.weight * 100).toFixed(1)}%</div>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="muted" style={{ fontSize: 13 }}>No evidence raised.</div>
             )}
             <div className="spacer" />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ textTransform: 'none', letterSpacing: 0, color: 'var(--text)' }}>Full report</h3>
+            </div>
             <pre>{d.report}</pre>
           </>
         )}
@@ -243,7 +428,7 @@ function PhoneVerifyBox({ pv, busy, onAction }) {
         {(pv.call_script || []).map((line, i) => <div key={i} className="muted" style={{ fontSize: 13, marginTop: 4 }}>• {line}</div>)}
       </details>
       {(pv.call_delivered || pv.call_sid || pv.recording_available) && (
-        <div className="rec-log" style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #24304d' }}>
+        <div className="rec-log" style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
           <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Recorded call</div>
           <div className="muted" style={{ fontSize: 13 }}>
             Delivery: <b>{pv.call_delivered || '—'}</b>
@@ -317,6 +502,7 @@ function LiveTest({ onInvestigate }) {
         : mode === 'review' ? await api.demoBorderline(phone) : await api.demoClean()
       const res = await api.investigate(body)
       setOut(res)
+      if (onInvestigate) onInvestigate(res)
     } catch (e) {
       setErr(e.message)
     } finally {
@@ -332,6 +518,7 @@ function LiveTest({ onInvestigate }) {
     try {
       const r = await api.correct(out.event_id, isFraud)
       setCorrMsg(`Learned: marked as ${isFraud ? 'fraud' : 'clean'} (${r.label === 1 ? 'fraud' : 'clean'}).`)
+      if (onInvestigate) onInvestigate({ ...out, decision: isFraud ? 'block' : 'approve', _message: `Marked ${isFraud ? 'fraud (blocked)' : 'clean (approved)'}` })
     } catch (e) {
       setErr(e.message)
     }
@@ -346,6 +533,7 @@ function LiveTest({ onInvestigate }) {
       else if (action === 'resend') updated = await api.verResend(pv.verification_id)
       else updated = await api.verDeny(pv.verification_id)
       setOut({ ...out, phone_verification: updated })
+      if (onInvestigate && updated) onInvestigate({ ...out, decision: updated.status, phone_verification: updated })
     } catch (e) {
       setErr(e.message)
     } finally {
@@ -395,11 +583,14 @@ function LiveTest({ onInvestigate }) {
             <div className="score-box"><div className="m">Investigator</div><div className="p accent">{(out.scores.investigator * 100).toFixed(0)}%</div></div>
           </div>
           {out.evidence.length > 0 && (
-            <ul className="evidence">
+            <div style={{ marginTop: 10 }}>
               {out.evidence.map((e, i) => (
-                <li key={i}>• <span className="tag">[{e.model}]</span> {e.detail}</li>
+                <div key={i} className={`evidence-card model-${e.model}`}>
+                  <div className="ec-head">{e.model.replace(/_/g, ' ')} · {e.signal}</div>
+                  <div style={{ fontSize: 13 }}>{e.detail}</div>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
           <div className="form-row" style={{ marginTop: 10 }}>
             <span className="muted" style={{ fontSize: 13 }}>Was this decision right?</span>
@@ -421,14 +612,30 @@ function LiveTest({ onInvestigate }) {
 }
 
 // ------------------------------------------------------------------ recent transactions
-function RecentTransactions() {
+function RecentTransactions({ onAlert }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
+  const seen = useRef(new Set())
+  const { q, setQ, sortKey, sortDir, onSort, rows: view } = useStreamTable(rows)
 
   const load = useCallback(() => {
     setLoading(true)
-    api.events('', 100).then(setRows).catch(() => setRows([])).finally(() => setLoading(false))
-  }, [])
+    api.events('', 100).then((list) => {
+      setRows(list)
+      list.forEach((r) => {
+        if (!seen.current.has(r.event_id)) {
+          seen.current.add(r.event_id)
+          if (onAlert && (r.decision === 'block' || r.decision === 'review')) {
+            onAlert(
+              r.decision === 'block' ? 'Payment blocked' : 'Payment flagged for review',
+              `${r.user_id} · ₹${r.amount_inr.toLocaleString('en-IN')} at ${r.merchant} (${(r.p_investigator * 100).toFixed(0)}% risk)`,
+              r.decision,
+            )
+          }
+        }
+      })
+    }).catch(() => setRows([])).finally(() => setLoading(false))
+  }, [onAlert])
   useEffect(() => {
     load()
     const t = setInterval(load, 8000)
@@ -438,34 +645,44 @@ function RecentTransactions() {
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h3 style={{ margin: 0 }}>Recent transactions</h3>
+        <h3 style={{ margin: 0 }}>Recent transactions <span className="live-dot" /></h3>
         <button className="btn ghost" onClick={load}>Refresh</button>
       </div>
       <div className="muted" style={{ fontSize: 13, marginTop: 0 }}>
-        Latest scored payments in the stream.
+        Latest scored payments in the stream (live).
       </div>
+      <StreamToolbar q={q} setQ={setQ} placeholder="Search this stream…" />
       <div className="spacer" style={{ height: 10 }} />
       <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
-            <tr><th>Event</th><th>User</th><th>Merchant</th><th>Amount</th><th>Risk</th><th>Decision</th><th>Vector</th></tr>
+            <tr>
+              <th className="sortable" onClick={() => onSort('event_id')}>Event{sortKey === 'event_id' && <span className="sort-arrow">{sortDir === 'asc' ? '▲' : '▼'}</span>}</th>
+              <SortableTh label="User" k="user_id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Merchant" k="merchant" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableTh label="Amount" k="amount_inr" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <th>Risk</th>
+              <SortableTh label="Decision" k="decision" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <th>Vector</th>
+            </tr>
           </thead>
           <tbody>
             {loading && <tr><td colSpan={7} className="muted">Loading…</td></tr>}
-            {!loading && rows.length === 0 && <tr><td colSpan={7} className="muted">No transactions yet.</td></tr>}
-            {rows.map((r) => (
-              <tr key={r.event_id}>
-                <td className="mono">{r.event_id.slice(0, 18)}</td>
-                <td>{r.user_id}</td>
-                <td>{r.merchant}</td>
-                <td>₹{r.amount_inr.toLocaleString('en-IN')}</td>
-                <td style={{ color: r.p_investigator > 0.6 ? C.red : r.p_investigator > 0.35 ? C.amber : C.green }}>
-                  {(r.p_investigator * 100).toFixed(1)}%
-                </td>
-                <td><Badge decision={r.decision} /></td>
-                <td className="muted">{r.fraud_vector ? r.fraud_vector.replace(/_/g, ' ') : '—'}</td>
-              </tr>
-            ))}
+            {!loading && view.length === 0 && <tr><td colSpan={7} className="muted">No transactions yet.</td></tr>}
+            {view.map((r) => {
+              const riskColor = r.p_investigator > 0.6 ? C.red : r.p_investigator > 0.35 ? C.amber : C.green
+              return (
+                <tr key={r.event_id}>
+                  <td className="mono">{r.event_id.slice(0, 18)}</td>
+                  <td>{r.user_id}</td>
+                  <td>{r.merchant}</td>
+                  <td>₹{r.amount_inr.toLocaleString('en-IN')}</td>
+                  <td style={{ color: riskColor }}>{(r.p_investigator * 100).toFixed(1)}%</td>
+                  <td><Badge decision={r.decision} /></td>
+                  <td className="muted">{r.fraud_vector ? r.fraud_vector.replace(/_/g, ' ') : '—'}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -601,6 +818,15 @@ export default function App() {
   const [verSessions, setVerSessions] = useState([])
   const [verMode, setVerMode] = useState('simulated')
   const [ragOpen, setRagOpen] = useState(false)
+  const [theme, toggleTheme] = useTheme()
+
+  const [toasts, setToasts] = useState([])
+  const addToast = useCallback((title, msg, kind) => {
+    const id = Date.now() + Math.random()
+    setToasts((t) => [...t, { id, title, msg, kind: kind || 'approve' }])
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 5000)
+  }, [])
+  const dismissToast = (id) => setToasts((t) => t.filter((x) => x.id !== id))
 
   const isAdmin = session?.role === 'admin'
   const isCare = session?.role === 'customer_care'
@@ -629,12 +855,37 @@ export default function App() {
   }, [refreshVer])
   useEffect(load, [load])
 
+  const NAV = [
+    { id: 'userdb', label: 'User database' },
+    { id: 'stream', label: 'Recent transactions' },
+    { id: 'overview', label: 'Overview' },
+    { id: 'metrics', label: 'Track 02 metrics' },
+    { id: 'vectors', label: 'Fraud vectors' },
+    { id: 'phone', label: 'Phone verification' },
+    { id: 'learning', label: 'Continual learning' },
+    { id: 'queries', label: 'Customer-care queries' },
+    { id: 'events', label: 'Payment stream' },
+  ]
+  const active = useScrollSpy(NAV.map((n) => n.id))
+  const goto = (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+
   if (!session) {
     return <Login onSuccess={(s) => { setToken(s.token); setSession(s) }} />
   }
 
   const metrics = summary?.decision_metrics
   const roleLabel = session.role_label || session.role
+
+  const onInvestigate = (res) => {
+    const dec = res?.decision
+    if (!dec) return
+    const person = res?.user_id || 'a payer'
+    const amt = res?.amount_inr
+    const label = amt ? `${person} · ₹${Number(amt).toLocaleString('en-IN')}` : person
+    if (dec === 'block') addToast('Payment blocked', `${label} declined — high fraud risk.`, 'block')
+    else if (dec === 'review') addToast('Flagged for review', `${label} held for phone confirmation.`, 'review')
+    else if (dec === 'approve') addToast('Payment approved', `${label} cleared.`, 'approve')
+  }
 
   return (
     <div className="wrap">
@@ -645,6 +896,9 @@ export default function App() {
           <p>Razorpay Fraud Guardian · ML Risk · Behaviour AI · Graph Engine → AI Investigator</p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="theme-toggle" onClick={toggleTheme} title="Toggle dark / light theme">
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
           <span className="pill">{session.name} · {roleLabel}</span>
           {isAdmin && (
             <button className="btn" onClick={() => setRagOpen(true)} style={{ padding: '8px 12px' }}>
@@ -658,56 +912,87 @@ export default function App() {
         </div>
       </header>
 
-      {isAdmin && <UserDatabasePanel />}
+      <div className="app-grid">
+        <aside className="side-nav">
+          {NAV.filter((n) => (n.id === 'userdb' ? isAdmin : n.id === 'queries' ? (isAdmin || isCare) : true))
+            .map((n) => (
+              <a key={n.id} className={active === n.id ? 'active' : ''} onClick={() => goto(n.id)}>{n.label}</a>
+            ))}
+        </aside>
 
-      <RecentTransactions />
+        <div className="app-main">
+          {isAdmin && (
+            <div id="userdb" className="section-block" style={{ scrollMarginTop: 20 }}>
+              <UserDatabasePanel />
+            </div>
+          )}
 
-      <h2 className="section">Overview</h2>
-      <div className="grid grid-4">
-        <Stat label="Payments analysed" value={(summary?.n_events ?? '—').toLocaleString()} sub="synthetic Razorpay-style events" />
-        <Stat label="Fraud rate" value={summary ? (summary.fraud_rate * 100).toFixed(1) + '%' : '—'} sub={`${summary?.n_fraud ?? '—'} fraudulent events`} cls="red" />
-        <Stat label="Investigator AUC" value={summary ? summary.investigator_auc.toFixed(3) : '—'} sub={`ML AUC ${summary?.ml_auc?.toFixed(3) ?? '—'}`} cls="accent" />
-        <Stat label="Leakage" value={metrics ? (metrics.leakage * 100).toFixed(1) + '%' : '—'} sub={`${metrics?.fraud_caught ?? '—'}/${metrics?.fraud_total ?? '—'} fraud caught`} cls="amber" />
+          <div id="stream" className="section-block" style={{ scrollMarginTop: 20 }}>
+            <RecentTransactions onAlert={onInvestigate} />
+          </div>
+
+          <Section id="overview" title="Overview">
+            <div className="grid grid-4">
+              <AnimatedStat label="Payments analysed" num={summary?.n_events ?? 0} sub="synthetic Razorpay-style events" />
+              <AnimatedStat label="Fraud rate" num={summary ? summary.fraud_rate * 100 : 0} format={(v) => v.toFixed(1) + '%'} sub={`${summary?.n_fraud ?? '—'} fraudulent events`} cls="red" />
+              <AnimatedStat label="Investigator AUC" num={summary ? summary.investigator_auc : 0} format={(v) => v.toFixed(3)} sub={`ML AUC ${summary?.ml_auc?.toFixed(3) ?? '—'}`} cls="accent" />
+              <AnimatedStat label="Leakage" num={metrics ? metrics.leakage * 100 : 0} format={(v) => v.toFixed(1) + '%'} sub={`${metrics?.fraud_caught ?? '—'}/${metrics?.fraud_total ?? '—'} fraud caught`} cls="amber" />
+            </div>
+            <div className="spacer" />
+            <div className="grid grid-2">
+              {metrics && <DecisionPie metrics={metrics} />}
+              {summary && <ModelScores weights={summary.weights} />}
+            </div>
+          </Section>
+
+          <div id="metrics" className="section-block" style={{ scrollMarginTop: 20 }}>
+            <h2 className="section">Track 02 — AI Risk Manager: the bar</h2>
+            <TestMetrics t={tm} />
+          </div>
+
+          <Section id="vectors" title="Fraud vectors & live check">
+            <div className="grid grid-2">
+              {vectors && <VectorBars vectors={vectors} />}
+              <LiveTest key={summary ? 'loaded' : 'loading'} onInvestigate={onInvestigate} />
+            </div>
+          </Section>
+
+          <Section id="phone" title="Phone-call payment confirmation (review band)">
+            <PhoneVerificationPanel sessions={verSessions} mode={verMode} onChange={refreshVer} />
+          </Section>
+
+          {!isCare && (
+            <Section id="learning" title="Continual learning">
+              <LearningPanel />
+            </Section>
+          )}
+
+          {(isAdmin || isCare) && (
+            <Section id="queries" title="Customer-care queries">
+              <CustomerCarePanel />
+            </Section>
+          )}
+
+          <Section id="events" title="Payment stream" defaultOpen={false}>
+            <EventsTable onSelect={setSelected} />
+          </Section>
+        </div>
       </div>
-
-      <div className="spacer" />
-
-      <div className="grid grid-2">
-        {metrics && <DecisionPie metrics={metrics} />}
-        {summary && <ModelScores weights={summary.weights} />}
-      </div>
-
-      <div className="spacer" />
-      <h2 className="section">Track 02 — AI Risk Manager: the bar</h2>
-      <TestMetrics t={tm} />
-
-      <h2 className="section">Fraud vectors</h2>
-      <div className="grid grid-2">
-        {vectors && <VectorBars vectors={vectors} />}
-        <LiveTest key={summary ? 'loaded' : 'loading'} />
-      </div>
-
-      <h2 className="section">Phone-call payment confirmation (review band)</h2>
-      <PhoneVerificationPanel sessions={verSessions} mode={verMode} onChange={refreshVer} />
-
-      {!isCare && (
-        <>
-          <h2 className="section">Continual learning</h2>
-          <LearningPanel />
-        </>
-      )}
-
-      {(isAdmin || isCare) && (
-        <>
-          <h2 className="section">Customer-care queries</h2>
-          <CustomerCarePanel />
-        </>
-      )}
-
-      <h2 className="section">Payment stream</h2>
-      <EventsTable onSelect={setSelected} />
 
       {selected && <EventDetail id={selected} onClose={() => setSelected(null)} />}
+
+      <div className="toast-stack">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.kind}`}>
+            <span className="t-dot" />
+            <div style={{ minWidth: 0 }}>
+              <div className="t-title">{t.title}</div>
+              {t.msg && <div className="t-msg">{t.msg}</div>}
+            </div>
+            <button className="t-close" onClick={() => dismissToast(t.id)} title="Dismiss">×</button>
+          </div>
+        ))}
+      </div>
 
       {isAdmin && <AdminRagPanel open={ragOpen} onClose={() => setRagOpen(false)} />}
 
