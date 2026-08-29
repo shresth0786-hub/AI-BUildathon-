@@ -18,7 +18,6 @@ $fe = Start-Process -FilePath "npm.cmd" -ArgumentList "run","dev" `
 
 Write-Host ""
 Write-Host "Open the dashboard at:  http://localhost:5173" -ForegroundColor Green
-Write-Host "API docs at:            http://127.0.0.1:8100/docs" -ForegroundColor Green
 Write-Host ""
 Write-Host "Press Ctrl+C to stop. (Close the spawned windows to fully stop servers.)"
 

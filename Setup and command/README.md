@@ -56,7 +56,6 @@ This launches two servers (in hidden windows):
 | Service | URL |
 |---------|-----|
 | FastAPI backend | http://127.0.0.1:8100 |
-| API docs (Swagger) | http://127.0.0.1:8100/docs |
 | React dashboard | http://localhost:5173 |
 
 Press **Enter** in the terminal to stop both servers.

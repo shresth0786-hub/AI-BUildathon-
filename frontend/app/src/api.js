@@ -80,7 +80,7 @@ export const api = {
       is_new_device: true,
       three_ds_passed: true,
       status: 'captured',
-      phone: phone || import.meta.env.VITE_DEMO_PHONE || '+919876543210',
+      phone: phone || import.meta.env.VITE_DEMO_PHONE || '',
     },
     history: [],
   }),
