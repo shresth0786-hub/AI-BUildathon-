@@ -1,0 +1,19 @@
+.git
+**/__pycache__
+*.pyc
+**/.venv
+**/venv
+**/node_modules
+**/dist
+**/.env
+
+# Build artifacts — regenerated at build time by train.py
+backend/artifacts/*
+backend/data/*
+backend/database/*
+
+# IDE / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db

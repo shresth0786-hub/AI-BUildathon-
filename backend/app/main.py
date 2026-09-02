@@ -25,6 +25,9 @@ from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 from app.pipeline import FraudDetector
@@ -529,3 +532,22 @@ def demo_fraud():
 def demo_clean():
     """Clean demo: benign established-customer payment body for /api/investigate."""
     return {"event": razorpay_client.demo_clean_payment(), "history": []}
+
+
+# ------------------------------------------------------------------ SPA static
+# When the frontend is built (vite build), its output lives in
+# frontend/app/dist/.  We mount that as a static directory and add a
+# catch-all route that returns index.html so client-side routing works.
+_FRONTEND_DIST = (
+    Path(__file__).resolve().parent.parent.parent / "frontend" / "app" / "dist"
+)
+if _FRONTEND_DIST.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="static-assets")
+
+    @app.get("/")
+    def _serve_root():
+        return FileResponse(str(_FRONTEND_DIST / "index.html"))
+
+    @app.get("/{path:path}")
+    def _serve_spa(path: str):
+        return FileResponse(str(_FRONTEND_DIST / "index.html"))
