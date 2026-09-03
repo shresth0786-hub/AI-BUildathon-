@@ -185,6 +185,13 @@ to launch both at once.
 Build and run in one step — no local Node or Python setup needed beyond Docker:
 
 ```bash
+docker compose up --build -d      # recommended  (persistent data volumes)
+docker compose down               # stop (data is kept in volumes)
+```
+
+or with the base image directly:
+
+```bash
 docker build -t sentinel-ai .
 docker run -p 8100:8100 sentinel-ai
 ```
@@ -195,6 +202,24 @@ are both served from the same container.
 > The first build takes a few minutes (it installs deps, builds the frontend
 > with Vite, and trains the model). Subsequent builds are fast thanks to layer
 > caching.
+
+**Runtime data lives on persistent volumes, not in the image.** All
+user-generated state — new/uploaded datasets, investigated users,
+customer-care queries, feedback labels, and OTP verification log — is written
+to `/app/backend/data` and `/app/backend/app/database/db` in the container.
+`docker-compose.yml` mounts these as named volumes (`sentinel_data`,
+`sentinel_db`) so they survive container restarts and rebuilds. With plain
+`docker run`, mount them explicitly to keep the same behaviour:
+
+```bash
+docker run -p 8100:8100 \
+  -v sentinel_data:/app/backend/data \
+  -v sentinel_db:/app/backend/app/database/db \
+  sentinel-ai
+```
+
+Nothing is baked into the Dockerfile except static model artifacts (trained at
+build time) and code — all runtime writes go to volumes.
 
 ---
 
@@ -243,6 +268,7 @@ razorpay-fraud-detector/
 │               ├── UserDatabasePanel.jsx  # investigated users + deletion
 │               └── ...               # other dashboard panels
 ├── Dockerfile                     # single-container multi-stage build
+├── docker-compose.yml             # one-command run + persistent data volumes
 ├── .dockerignore                  # keeps Docker image clean
 ├── .gitignore
 ├── start.ps1                      # launch both (Windows)

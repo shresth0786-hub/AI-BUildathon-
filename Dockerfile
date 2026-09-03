@@ -30,8 +30,9 @@ COPY backend/ ./backend/
 COPY --from=frontend-build /app/frontend/dist ./frontend/app/dist
 
 # Copy database schema files (so app.database can initialise on first run)
-# backend/database/db/ is empty at build time; created at container start.
-RUN mkdir -p backend/database/db
+# Runtime user/query/feedback data is NOT baked here — it lives on persistent
+# volumes mounted in docker-compose.yml / `docker run -v` (see below).
+RUN mkdir -p backend/data backend/database/db backend/app/database/db
 
 # Train model artifacts inside the image
 WORKDIR /app/backend

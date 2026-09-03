@@ -1,0 +1,27 @@
+# =============================================================
+# Sentinel AI — Docker Compose
+# Runs the single-container image (API + built dashboard) and keeps
+# all runtime user/query/feedback data on PERSISTENT named volumes,
+# so it survives container rebuilds/restarts.
+#
+#   docker compose up --build -d
+#   open http://localhost:8100
+# =============================================================
+
+services:
+  sentinel-ai:
+    build: .
+    image: sentinel-ai:latest
+    container_name: sentinel-ai
+    ports:
+      - "8100:8100"
+    volumes:
+      # Persistent runtime data. NOT stored in the image/Dockerfile —
+      # these are survive rebuilds and are the only writable runtime paths.
+      - sentinel_data:/app/backend/data
+      - sentinel_db:/app/backend/app/database/db
+    restart: unless-stopped
+
+volumes:
+  sentinel_data:      # feedback.json, verifications.json, users.json
+  sentinel_db:        # users.json, queries.json (user_db / query_db)
