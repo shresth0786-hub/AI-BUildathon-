@@ -1,16 +1,18 @@
-# 🛡️ Sentinel AI — Razorpay Fraud Guardian
+# Sentinel AI — Razorpay Fraud Guardian
 
 An **end-to-end AI fraud-detection system** built for the Razorpay buildathon
 **(Track 02 — AI Risk Manager)**, and strictly **defense-only**.
 
 Sentinel AI watches **every payment**, explains its verdict with evidence,
-**phone-confirms borderline cases** before settling, and **learns from every
-outcome** over time. It ships with an honest, held-out evaluation (no leakage),
-so the metrics you see are the metrics it really would produce.
+**phone-confirms borderline cases** via call / SMS / WhatsApp OTP before
+settling, and **learns from every outcome** over time. It ships with an honest,
+held-out evaluation (no leakage), so the metrics you see are the metrics it
+really would produce.
 
-> 🚀 **Live demo:** *(paste your deployed dashboard URL here — e.g. https://your-demo.onrender.com)*
+> **Live demo:** *(paste your deployed dashboard URL here — e.g. https://your-demo.onrender.com)*
 > The dashboard visualises the entire pipeline: live payment checks, model
-> explanations, the phone-verification panel, and the admin RAG assistant.
+> explanations, the phone-verification panel (call / SMS / WhatsApp), and the
+> SENbot admin assistant.
 
 ---
 
@@ -22,40 +24,40 @@ flowchart TB
         E["Razorpay-style event"]
     end
 
-    E --> F["Feature Engineering<br/>(leak-safe velocity, geo, device)"]
+    E --> F["Feature Engineering\n(leak-safe velocity, geo, device)"]
 
     subgraph Models["Three Independent Models (parallel)"]
-        M1["ML Risk<br/>gradient-boosted"] --> I
-        M2["Behaviour AI<br/>anomaly autoencoder"] --> I
-        M3["Graph Engine<br/>network page-rank"] --> I
+        M1["ML Risk\ngradient-boosted"] --> I
+        M2["Behaviour AI\nanomaly autoencoder"] --> I
+        M3["Graph Engine\nnetwork page-rank"] --> I
     end
 
     F --> M1
     F --> M2
     F --> M3
 
-    I["AI Investigator<br/>ensemble -> one fraud probability + evidence"]
+    I["AI Investigator\nensemble -> one fraud probability + evidence"]
     I --> D{"Decision band"}
 
-    D -- "p < 0.44" --> A["APPROVE<br/>settle payment"]
-    D -- "0.44 – 0.80" --> R["REVIEW<br/>phone-call / OTP"]
-    D -- "p > 0.80" --> B["BLOCK<br/>decline + evidence"]
+    D -- "p < 0.44" --> A["APPROVE\nsettle payment"]
+    D -- "0.44 - 0.80" --> R["REVIEW\nphone / SMS / WhatsApp OTP"]
+    D -- "p > 0.80" --> B["BLOCK\ndecline + evidence"]
 
     R -->|"correct OTP"| A
     R -->|"wrong OTP / denied"| B
 
-    A --> L["Continual Learning<br/>feedback + online corrector + retrain"]
+    A --> L["Continual Learning\nfeedback + online corrector + retrain"]
     B --> L
     L -->|"smarter over time"| I
 
     subgraph DB["Persistence (app/database)"]
-        UDB["user_db<br/>users.json"]
-        QDB["query_db<br/>queries.json"]
+        UDB["user_db\nusers.json"]
+        QDB["query_db\nqueries.json"]
     end
 
-    subgraph RAG["Admin RAG (app/rag)"]
-        RP["rag_pipeline<br/>gathers live context"]
-        RE["rag engine<br/>retrieval + grounding"]
+    subgraph SEN["SENbot (app/rag)"]
+        RP["rag_pipeline\ngathers live context"]
+        RE["rag engine\nretrieval + grounding"]
         RP --> RE
     end
 
@@ -74,9 +76,9 @@ flowchart TB
 scored in parallel by three very different models. An **AI Investigator**
 combines them into one calibrated fraud probability, then picks a decision band:
 low risk is **approved**, medium risk is **held for a phone call** (the customer
-must confirm an OTP before the money moves), and high risk is **blocked**. Every
-outcome feeds back so the system gets smarter and the admin can ask questions in
-natural language.
+must confirm an OTP via call, SMS, or WhatsApp before the money moves), and high
+risk is **blocked**. Every outcome feeds back so the system gets smarter and the
+admin can ask questions in natural language through **SENbot**.
 
 ---
 
@@ -85,12 +87,13 @@ natural language.
 - **Explainable, not a black box.** Every verdict ships with an evidence list
   (which model fired and why — velocity, geography, bot cadence, shared device,
   ensemble agreement).
-- **A human safety net.** Borderline payments are *not* auto-approved. A real
-  phone call / OTP confirms ownership before settlement.
+- **A human safety net.** Borderline payments are *not* auto-approved. The
+  customer confirms ownership via **phone call, SMS, or WhatsApp OTP** before
+  settlement.
 - **Learns continually.** Confirmed outcomes adapt the model immediately
   (online corrector) and on retrain — defense-only, it may only escalate a
   decision, never silently weaken it.
-- **An admin that reads the live data.** A built-in RAG assistant answers
+- **SENbot reads the live data.** A built-in RAG assistant answers
   *"what's the issue and what should I do?"* grounded in the real, current
   dataset — no embedding server or API key needed.
 
@@ -100,9 +103,9 @@ natural language.
 
 | Model | Approach |
 |-------|----------|
-| **ML Risk** | Supervised gradient-boosted classifier + calibration → `p_ml` |
-| **Behaviour AI** | Unsupervised autoencoder on legit-only behaviour → reconstruction-anomaly `p_behav` |
-| **Graph Engine** | Heterogeneous payer / card / device graph + influence propagation from confirmed-fraud seeds → `p_graph` |
+| **ML Risk** | Supervised gradient-boosted classifier + calibration |
+| **Behaviour AI** | Unsupervised autoencoder on legit-only behaviour, reconstruction-anomaly scoring |
+| **Graph Engine** | Heterogeneous payer / card / device graph + influence propagation from confirmed-fraud seeds |
 
 Each fraud vector in the demo is engineered around a **known real-world scam**:
 
@@ -113,6 +116,10 @@ Each fraud vector in the demo is engineered around a **known real-world scam**:
 | `BOT_AUTOMATION` | machine cadence, fast typing, same device/card |
 | `COLLUSION_RING` | a set of payers sharing devices/cards and cross-funding |
 | `STOLEN_CARD` | new device + high value + billing/shipping mismatch |
+| `UPI_P2P` | suspicious UPI peer-to-peer transfer to new beneficiary |
+| `ACCOUNT_TAKEOVER` | sudden device + password change + high-value payout |
+| `REFUND_ABUSE` | rapid refund requests in a short session window |
+| `MERCHANT_BIN` | abnormal merchant concentration on a single BIN |
 
 ---
 
@@ -123,17 +130,17 @@ Measured on a **held-out split** the ensemble never trained on — no leakage.
 | Metric | Value |
 |--------|-------|
 | **Precision** | **1.000** |
-| **Recall (fraud blocked)** | **0.973** (180 / 185) |
-| **F1** | **0.986** |
+| **Recall (fraud blocked)** | **0.984** (182 / 185) |
+| **F1** | **0.992** |
 | False positives (legit blocked) | **0** |
-| False negatives (fraud approved) | 5 |
-| Investigator AUC | 0.998 |
+| False negatives (fraud approved) | 3 |
+| Investigator AUC | 1.000 |
 
-**Cost outcome:** false-positive cost **₹0**, false-negative cost **₹18,466**,
-**total ₹18,466** vs. a no-intervention baseline of **₹3,13,247** →
-**₹3,04,781 of money prevented**. All 5 "false negatives" landed in the
-`review` (phone-call) band, so they were caught by human confirmation rather
-than released.
+**Cost outcome:** false-positive cost **Rs.0**, false-negative cost **Rs.8,466**,
+**total Rs.8,466** vs. a no-intervention baseline of **Rs.3,13,247** =
+**Rs.3,04,781 of money prevented**. All 3 "false negatives" landed in the
+`review` (OTP confirmation) band, so they were caught by human confirmation
+rather than released.
 
 ---
 
@@ -142,8 +149,10 @@ than released.
 | Role | Credentials |
 |------|-------------|
 | Admin | `admin` / `admin123` |
-| Employee | `employee` / `employee123` |
-| Customer care | `care` / `care123` |
+
+The admin has full access: live scoring, investigation reports, phone / SMS /
+WhatsApp OTP verification, SENbot Q&A (with search + delete), and continual
+learning retrain.
 
 ---
 
@@ -151,12 +160,14 @@ than released.
 
 Requires **Python 3.10+** and **Node 18+**.
 
+### Option A — local (recommended for development)
+
 ```bash
 # Backend
 cd backend
 pip install -r requirements.txt
 python train.py                       # one-time: train + save model artifacts
-uvicorn app.main:app --port 8100      # API
+uvicorn app.main:app --port 8100      # API + serves built dashboard if present
 
 # Dashboard (second terminal)
 cd frontend/app
@@ -164,20 +175,35 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** for the dashboard. (The Vite dev server proxies
-`/api` to `http://127.0.0.1:8100`.)
+Open **http://localhost:5173** for the dashboard (Vite proxies `/api` to `:8100`).
 
 On Windows you can also run `powershell -ExecutionPolicy Bypass -File start.ps1`
 to launch both at once.
+
+### Option B — Docker (single container)
+
+Build and run in one step — no local Node or Python setup needed beyond Docker:
+
+```bash
+docker build -t sentinel-ai .
+docker run -p 8100:8100 sentinel-ai
+```
+
+Open **http://localhost:8100** — the built React dashboard and the FastAPI API
+are both served from the same container.
+
+> The first build takes a few minutes (it installs deps, builds the frontend
+> with Vite, and trains the model). Subsequent builds are fast thanks to layer
+> caching.
 
 ---
 
 ## Tech stack
 
-- **Backend:** FastAPI, Python, XGBoost, PyTorch (autoencoder)
+- **Backend:** FastAPI, Python, XGBoost, scikit-learn
 - **Frontend:** React + Vite + Recharts
-- **Extras:** offline RAG (TF-IDF), simulated Twilio phone verification
-  (real Twilio supported via env keys)
+- **Extras:** offline TF-IDF RAG (SENbot), simulated Twilio phone / SMS / WhatsApp
+  verification (real Twilio supported via env keys)
 
 ---
 
@@ -187,33 +213,79 @@ to launch both at once.
 razorpay-fraud-detector/
 ├── backend/
 │   ├── app/
-│   │   ├── data_generator.py      # Razorpay-style events
-│   │   ├── features.py            # feature engineering
+│   │   ├── data_generator.py      # Razorpay-style events (9 fraud vectors)
+│   │   ├── features.py            # leak-safe feature engineering (50 features)
 │   │   ├── models/
-│   │   │   ├── ml_risk.py         # supervised risk scorer
+│   │   │   ├── ml_risk.py         # supervised risk scorer (XGBoost)
 │   │   │   ├── behaviour_ai.py    # anomaly autoencoder
 │   │   │   └── graph_engine.py    # network graph model
 │   │   ├── investigator.py        # ensemble + evidence
-│   │   ├── verification.py        # phone-call payment confirmation (OTP)
+│   │   ├── verification.py        # phone / SMS / WhatsApp OTP verification
 │   │   ├── feedback.py            # continual learning
-│   │   ├── rag/                     # admin Q&A (offline RAG)
-│   │   │   ├── rag_knowledge.py     #   static "issues & remedies" runbook
-│   │   │   ├── rag.py               #   retrieval + grounded answering
-│   │   │   └── rag_pipeline.py      #   orchestration, feeds live DB context
-│   │   ├── database/                # persisted stores (users.json, queries.json)
-│   │   │   ├── user_db.py           #   user / payer database
-│   │   │   └── query_db.py          #   customer-care query database
-│   │   └── main.py                # FastAPI
+│   │   ├── rag/                   # SENbot — admin Q&A (offline RAG)
+│   │   │   ├── rag_knowledge.py   #   static "issues & remedies" runbook
+│   │   │   ├── rag.py             #   TF-IDF retrieval + grounded answering
+│   │   │   └── rag_pipeline.py    #   orchestration, feeds live DB context
+│   │   ├── database/              # persisted stores (users.json, queries.json)
+│   │   │   ├── user_db.py         #   user / payer database
+│   │   │   └── query_db.py        #   customer-care query database
+│   │   └── main.py                # FastAPI + serves built dashboard (SPA)
 │   ├── train.py                   # train + save artifacts
 │   └── requirements.txt
 ├── frontend/
 │   └── app/                       # React (Vite) dashboard
-│       └── src/App.jsx
+│       └── src/
+│           ├── App.jsx            # main dashboard shell + nav
+│           ├── api.js             # API client (auth + fetch helpers)
+│           └── components/
+│               ├── Login.jsx          # admin login
+│               ├── AdminRagPanel.jsx   # SENbot Q&A panel
+│               ├── UserDatabasePanel.jsx  # investigated users + deletion
+│               └── ...               # other dashboard panels
+├── Dockerfile                     # single-container multi-stage build
+├── .dockerignore                  # keeps Docker image clean
+├── .gitignore
 ├── start.ps1                      # launch both (Windows)
 └── README.md
 ```
 
 ---
 
-Built for **Razorpay AI Buildathon — Track 02 · AI Risk Manager**. Defense-only,
+## API endpoints
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| POST | `/api/auth/login` | Authenticate; returns JWT + role |
+| GET | `/api/summary` | Model summary + decision metrics |
+| GET | `/api/events?risk=&limit=` | Recent payments with scores & decisions |
+| GET | `/api/events/{event_id}` | Full investigation report for one event |
+| POST | `/api/investigate` | Score a live payment (approve / review / block + evidence) |
+| GET | `/api/vectors` | Fraud-vector distribution |
+| GET | `/api/test-metrics` | Honest held-out precision / recall / F1 + cost |
+| POST | `/api/feedback/{id}/correct` | Mark clean / fraud (continual learning) |
+| POST | `/api/learning/retrain` | Retrain on confirmed feedback |
+| GET | `/api/users` | Live-investigated users in the database |
+| GET | `/api/users/search?q=` | Search users by phone / ID / name / merchant |
+| DELETE | `/api/users/{user_id}` | Delete user + their events (admin only) |
+| POST | `/api/rag/ask` | SENbot Q&A (runbook + live dataset) |
+| GET | `/api/rag/status` | SENbot + pipeline source counts |
+| POST | `/api/verification/{event_id}` | Start phone / SMS / WhatsApp OTP verification |
+| POST | `/api/verification/{event_id}/public` | OTP verification for the review band demo |
+
+---
+
+## Optional real integrations
+
+Copy `backend/.env.example` → `backend/.env` and fill in keys. `.env` is
+gitignored — never commit it.
+
+- **Razorpay keys** (`rzp_test_*`) — enable `/api/rzp/create-order` and real
+  `/api/rzp/webhook` ingestion.
+- **Twilio keys** (account SID, auth token, phone number) — enable real outbound
+  phone / SMS / WhatsApp payment confirmation. Without keys the flow runs in
+  fully simulated mode and all OTP details are logged in the dashboard.
+
+---
+
+Built for **Razorpay AI Buildathon — Track 02 / AI Risk Manager**. Defense-only,
 explainable, and honest about its numbers.
