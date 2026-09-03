@@ -26,17 +26,38 @@ from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, status
 
-_SECRET = os.environ.get("SENTINEL_AUTH_SECRET", "sentinel-demo-secret-change-me")
-_TOKEN_TTL = 12 * 3600  # 12 hours
+# ------------------------------------------------------------------ secrets
+# The token-signing secret and admin password are injected via environment
+# variables / a secret manager (NEVER baked into the image or committed).
+#
+#   SENTINEL_AUTH_SECRET     -> HMAC token-signing secret (min 32 chars in prod)
+#   SENTINEL_ADMIN_PASSWORD  -> admin account password
+#
+# For local/demo runs we fall back to demo values so the app boots instantly,
+# but we refuse to run with the insecure default when SENTINEL_STRICT=1
+# (set in production / hardened containers). Always set a real secret in prod.
+
+_DEFAULT_SECRET = "sentinel-demo-secret-change-me"
+_DEFAULT_PASSWORD = "admin123"
+
+_SECRET = os.environ.get("SENTINEL_AUTH_SECRET", _DEFAULT_SECRET)
+_TOKEN_TTL = int(os.environ.get("SENTINEL_TOKEN_TTL", 12 * 3600))
+
+if _SECRET == _DEFAULT_SECRET and os.environ.get("SENTINEL_STRICT") == "1":
+    raise RuntimeError(
+        "INVALID CONFIG: SENTINEL_AUTH_SECRET must be set to a real secret when "
+        "SENTINEL_STRICT=1. Refusing to start with the insecure demo default."
+    )
 
 # ------------------------------------------------------------------ demo users
-# In production this would come from a real user store / DB. For the demo we
-# ship a single admin account so the login page can be tested immediately.
+# In production this would come from a real user store / DB (with hashed
+# passwords). For the demo we ship a single admin account; the password can be
+# overridden with SENTINEL_ADMIN_PASSWORD so you are not stuck on the default.
 USERS = {
     "admin": {
         "name": "Demo Admin",
         "role": "admin",
-        "password": "admin123",
+        "password": os.environ.get("SENTINEL_ADMIN_PASSWORD", _DEFAULT_PASSWORD),
     },
 }
 

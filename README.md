@@ -180,21 +180,24 @@ Open **http://localhost:5173** for the dashboard (Vite proxies `/api` to `:8100`
 On Windows you can also run `powershell -ExecutionPolicy Bypass -File start.ps1`
 to launch both at once.
 
-### Option B — Docker (single container)
+### Option B — Docker (single container, hardened)
 
-Build and run in one step — no local Node or Python setup needed beyond Docker:
+Build and run in one step — no local Node or Python setup needed beyond Docker.
+The image is **hardened**: it runs as a non-root user on a read-only root
+filesystem, drops all capabilities, and stores **no data or secrets** in the
+image (see [SECURITY.md](SECURITY.md)).
 
 ```bash
-docker compose up --build -d      # recommended  (persistent data volumes)
+# Provide runtime secrets from the environment / secret manager
+export SENTINEL_AUTH_SECRET="$(openssl rand -hex 32)"
+export SENTINEL_ADMIN_PASSWORD='a-strong-admin-password'
+docker compose up --build -d      # recommended (persistent volumes + hardened)
 docker compose down               # stop (data is kept in volumes)
 ```
 
-or with the base image directly:
-
-```bash
-docker build -t sentinel-ai .
-docker run -p 8100:8100 sentinel-ai
-```
+> The compose file requires `SENTINEL_AUTH_SECRET` and
+> `SENTINEL_ADMIN_PASSWORD` (they are never hardcoded). Set them as above or
+> via your secret manager. Without them `docker compose up` refuses to start.
 
 Open **http://localhost:8100** — the built React dashboard and the FastAPI API
 are both served from the same container.
@@ -209,17 +212,26 @@ customer-care queries, feedback labels, and OTP verification log — is written
 to `/app/backend/data` and `/app/backend/app/database/db` in the container.
 `docker-compose.yml` mounts these as named volumes (`sentinel_data`,
 `sentinel_db`) so they survive container restarts and rebuilds. With plain
-`docker run`, mount them explicitly to keep the same behaviour:
+`docker run`, mount them explicitly and pass secrets to keep the same
+behaviour:
 
 ```bash
 docker run -p 8100:8100 \
+  -e SENTINEL_AUTH_SECRET="$(openssl rand -hex 32)" \
+  -e SENTINEL_ADMIN_PASSWORD='a-strong-admin-password' \
+  -e SENTINEL_REDACT_OTP=1 \
   -v sentinel_data:/app/backend/data \
   -v sentinel_db:/app/backend/app/database/db \
+  --user 10001:10001 --read-only \
   sentinel-ai
 ```
 
-Nothing is baked into the Dockerfile except static model artifacts (trained at
-build time) and code — all runtime writes go to volumes.
+Nothing is baked into the Dockerfile except static model artifacts (the approved
+model version, trained at build time) and code — all runtime writes go to
+volumes, and all secrets are injected at runtime.
+
+For the full hardening runbook (secrets, auth, CORS, OTP, container
+privileges, supply chain), see **[SECURITY.md](SECURITY.md)**.
 
 ---
 

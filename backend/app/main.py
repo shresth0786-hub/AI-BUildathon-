@@ -39,9 +39,19 @@ _ARTIFACT_DIR = os.path.join(os.path.dirname(__file__), "..", "artifacts")
 
 app = FastAPI(title="Sentinel AI API — Razorpay Fraud Guardian", version="1.0.0")
 
+# ------------------------------------------------------------------ CORS
+# In production, restrict this to your dashboard origin(s) via SENTINEL_CORS_ORIGINS
+# (comma-separated). A wildcard only makes sense for the local buildathon demo.
+_cors_origins = [
+    o.strip() for o in
+    os.environ.get("SENTINEL_CORS_ORIGINS", "*").split(",")
+    if o.strip()
+] or ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

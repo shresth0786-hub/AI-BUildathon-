@@ -317,13 +317,27 @@ class PhoneVerifier:
             pass
 
     @staticmethod
+    def _redact_otp() -> bool:
+        """Return True when the raw OTP must NOT be exposed in API responses.
+
+        The simulated demo shows the OTP so an analyst can complete the call,
+        but production deployments should force redaction with
+        SENTINEL_REDACT_OTP=1 (OTP is only ever delivered to the payer's phone,
+        never returned to the browser/API).
+        """
+        if os.environ.get("SENTINEL_REDACT_OTP") == "1":
+            return True
+        return PhoneVerifier.mode() == "real"
+
+    @staticmethod
     def _public(ver: dict) -> dict:
-        """Never expose internals (raw OTP is shown for the simulated demo so an
-        analyst can complete the call; strip it for a 'real' production mode)."""
+        """Never expose internals (raw OTP is shown only for the simulated demo
+        so an analyst can complete the call; redact it otherwise)."""
         copy = dict(ver)
-        # OTP is intentionally included for the simulated demo. In real mode
-        # the payer reads it back, so we redact it server-side.
-        if PhoneVerifier.mode() == "real":
+        # OTP is intentionally included for the simulated demo. In real mode —
+        # or when SENTINEL_REDACT_OTP=1 — we redact it server-side so it is only
+        # ever delivered to the payer's phone.
+        if PhoneVerifier._redact_otp():
             copy["otp"] = "******"
         return copy
 

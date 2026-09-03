@@ -1,8 +1,12 @@
 # =============================================================
-# Sentinel AI — Docker Compose
-# Runs the single-container image (API + built dashboard) and keeps
-# all runtime user/query/feedback data on PERSISTENT named volumes,
-# so it survives container rebuilds/restarts.
+# Sentinel AI — Docker Compose (hardened demo/deploy)
+#
+# * Runs the single-container image (API + built dashboard).
+# * Container root filesystem is READ-ONLY; only runtime-data volumes are writable.
+# * NO secrets in this file. Secrets (auth secret, admin password, Twilio /
+#   Razorpay keys) are injected at runtime from the environment / a secret
+#   manager — e.g. `docker compose --env-file .env.prod up -d` or your
+#   orchestrator's secret store.
 #
 #   docker compose up --build -d
 #   open http://localhost:8100
@@ -13,14 +17,44 @@ services:
     build: .
     image: sentinel-ai:latest
     container_name: sentinel-ai
+    restart: unless-stopped
+
     ports:
       - "8100:8100"
+
+    # Run hardened: non-root user, read-only root, no extra capabilities.
+    user: "10001:10001"          # must match the appuser in the Dockerfile
+    read_only: true              # container root fs is not writable
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
     volumes:
-      # Persistent runtime data. NOT stored in the image/Dockerfile —
-      # these are survive rebuilds and are the only writable runtime paths.
+      # Sole writable paths — persistent runtime data (users, queries, feedback,
+      # verifications, uploaded datasets). Never stored in the image.
       - sentinel_data:/app/backend/data
       - sentinel_db:/app/backend/app/database/db
-    restart: unless-stopped
+
+    # Runtime secrets are NEVER inline here. Pass them from the environment /
+    # secret manager. Override CORS origins and enable strict key checking:
+    environment:
+      SENTINEL_STRICT: "1"
+      SENTINEL_CORS_ORIGINS: "${SENTINEL_CORS_ORIGINS:-http://localhost:8100}"
+      # Passed through from the host env / secret manager — do not hardcode:
+      #   SENTINEL_AUTH_SECRET
+      #   SENTINEL_ADMIN_PASSWORD
+      #   SENTINEL_REDACT_OTP=1
+      #   TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER
+      #   RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET
+      SENTINEL_AUTH_SECRET: "${SENTINEL_AUTH_SECRET:?set SENTINEL_AUTH_SECRET via your secret manager}"
+      SENTINEL_ADMIN_PASSWORD: "${SENTINEL_ADMIN_PASSWORD:?set SENTINEL_ADMIN_PASSWORD via your secret manager}"
+      SENTINEL_REDACT_OTP: "${SENTINEL_REDACT_OTP:-1}"
+      TWILIO_ACCOUNT_SID: "${TWILIO_ACCOUNT_SID:-}"
+      TWILIO_AUTH_TOKEN: "${TWILIO_AUTH_TOKEN:-}"
+      TWILIO_PHONE_NUMBER: "${TWILIO_PHONE_NUMBER:-}"
+      RAZORPAY_KEY_ID: "${RAZORPAY_KEY_ID:-}"
+      RAZORPAY_KEY_SECRET: "${RAZORPAY_KEY_SECRET:-}"
 
 volumes:
   sentinel_data:      # feedback.json, verifications.json, users.json

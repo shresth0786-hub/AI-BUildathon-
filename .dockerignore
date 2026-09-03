@@ -5,12 +5,23 @@
 **/venv
 **/node_modules
 **/dist
+
+# Secrets / credentials — NEVER allowed into a build context
 **/.env
+**/*.env
+**/.env.*
+**/*.pem
+**/*.key
+**/secrets*
+**/*secret*
+**/*token*
+**/*credential*
 
 # Build artifacts — regenerated at build time by train.py
 backend/artifacts/*
 backend/data/*
 backend/database/*
+backend/app/database/db/*
 
 # IDE / OS
 .vscode
